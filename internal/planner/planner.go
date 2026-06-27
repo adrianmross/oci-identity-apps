@@ -18,11 +18,15 @@ const (
 	RefreshTokenGrant                      = "refresh_token"
 	ClientCredentialsGrant                 = "client_credentials"
 	JWTBearerGrant                         = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+	TokenExchangeGrant                     = "urn:ietf:params:oauth:grant-type:token-exchange"
 	ServiceGeneric             ServiceKind = "generic"
 	ServiceOBP                 ServiceKind = "obp"
 	AppUser                    AppKind     = "user"
 	AppService                 AppKind     = "service"
 	AppJWT                     AppKind     = "jwt"
+	AppJWTService              AppKind     = "jwt-service"
+	AppJWTUser                 AppKind     = "jwt-user"
+	AppWorkload                AppKind     = "workload"
 	ClientPublic               ClientType  = "public"
 	ClientConfidential         ClientType  = "confidential"
 )
@@ -231,7 +235,7 @@ func Build(options Options) (Plan, error) {
 
 func ParseIncludes(value string) ([]AppKind, error) {
 	if strings.TrimSpace(value) == "" {
-		return []AppKind{AppUser, AppService, AppJWT}, nil
+		return defaultIncludes(), nil
 	}
 	parts := strings.Split(value, ",")
 	includes := make([]AppKind, 0, len(parts))
@@ -241,7 +245,9 @@ func ParseIncludes(value string) ([]AppKind, error) {
 			continue
 		}
 		switch key {
-		case AppUser, AppService, AppJWT:
+		case AppJWT:
+			includes = append(includes, AppJWTService, AppJWTUser, AppWorkload)
+		case AppUser, AppService, AppJWTService, AppJWTUser, AppWorkload:
 			includes = append(includes, key)
 		default:
 			return nil, fmt.Errorf("unsupported app include %q", key)
@@ -322,16 +328,38 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 				"Use grant_type=client_credentials with the generated client id, client secret, and requested scope.",
 			},
 		})
-	default:
+	case AppJWTService:
 		return appPlan(appInput{
-			kind:          AppJWT,
-			name:          ctx.prefix + "-jwt-assertion",
-			displayName:   title(ctx.prefix) + " JWT Assertion",
-			purpose:       "Confidential OAuth client for trusted JWT bearer assertion exchange.",
+			kind:          AppJWTService,
+			name:          ctx.prefix + "-service-jwt",
+			displayName:   title(ctx.prefix) + " Service JWT Client",
+			purpose:       "Confidential OAuth client for service-account client credentials with JWT client assertion authentication.",
+			clientType:    ClientConfidential,
+			grants:        []string{ClientCredentialsGrant},
+			scope:         ctx.scope,
+			templateID:    ctx.templateIDs[AppJWTService],
+			idcsEndpoint:  ctx.idcsEndpoint,
+			bypassConsent: true,
+			accessExpiry:  ctx.accessTokenExpiry,
+			requiredPostCreate: []string{
+				"Register the client assertion signing certificate or public key trusted by the identity domain.",
+				"Grant only the target service roles required by this automation identity.",
+			},
+			usage: []string{
+				"Use grant_type=client_credentials with client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer.",
+				"Use oci-context --flow jwt-client-credentials with --client-assertion-command or --private-key-file.",
+			},
+		})
+	case AppJWTUser:
+		return appPlan(appInput{
+			kind:          AppJWTUser,
+			name:          ctx.prefix + "-user-jwt",
+			displayName:   title(ctx.prefix) + " User JWT Bearer",
+			purpose:       "Confidential OAuth client for trusted JWT bearer assertions that represent a user or mapped subject.",
 			clientType:    ClientConfidential,
 			grants:        []string{JWTBearerGrant},
 			scope:         ctx.scope,
-			templateID:    ctx.templateIDs[AppJWT],
+			templateID:    ctx.templateIDs[AppJWTUser],
 			idcsEndpoint:  ctx.idcsEndpoint,
 			bypassConsent: true,
 			accessExpiry:  ctx.accessTokenExpiry,
@@ -340,9 +368,34 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 				"Map the asserted subject to an identity that has only the target service roles it needs.",
 			},
 			usage: []string{
-				"Use a token helper that exchanges the signed assertion and emits the final access token.",
+				"Use grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer with the signed assertion.",
+				"Use oci-context --flow jwt-bearer with --assertion-command or --assertion-file.",
 			},
 		})
+	case AppWorkload:
+		return appPlan(appInput{
+			kind:          AppWorkload,
+			name:          ctx.prefix + "-workload-federation",
+			displayName:   title(ctx.prefix) + " Workload Federation",
+			purpose:       "Confidential OAuth client for exchanging trusted workload identity tokens for service access tokens.",
+			clientType:    ClientConfidential,
+			grants:        []string{TokenExchangeGrant},
+			scope:         ctx.scope,
+			templateID:    ctx.templateIDs[AppWorkload],
+			idcsEndpoint:  ctx.idcsEndpoint,
+			bypassConsent: true,
+			accessExpiry:  ctx.accessTokenExpiry,
+			requiredPostCreate: []string{
+				"Register or configure the external workload issuer trust, audience, and claim mapping required by the identity domain.",
+				"Grant only the target service roles required by the workload identity.",
+			},
+			usage: []string{
+				"Use grant_type=urn:ietf:params:oauth:grant-type:token-exchange with a JWT subject token.",
+				"Use oci-context --flow token-exchange with --subject-token-command for GitHub OIDC, Kubernetes, or other workload JWTs.",
+			},
+		})
+	default:
+		return AppPlan{}
 	}
 }
 
@@ -431,7 +484,7 @@ func baseCloudServiceApp(service ServiceKind, options Options) BaseCloudServiceA
 		ExpectedBehavior: []string{
 			"Treat the generated Oracle Blockchain Platform CloudGate app as service-owned and non-mutated.",
 			"Do not use a CloudGate callback for CLI authorization-code handoff because CloudGate consumes the code.",
-			"Create companion OAuth clients for local user auth, service automation, and JWT assertion flows.",
+			"Create companion OAuth clients for local user auth, service automation, service-account JWT, user JWT bearer, and workload federation flows.",
 		},
 	}
 }
@@ -462,9 +515,11 @@ func resolveTemplateIDs(options Options, userClientType ClientType) (map[AppKind
 		defaultUser = DefaultPublicAppTemplateID
 	}
 	values := map[AppKind]string{
-		AppUser:    firstNonEmpty(options.UserTemplateID, options.TemplateID, defaultUser),
-		AppService: firstNonEmpty(options.ServiceTemplateID, options.TemplateID, DefaultWebAppTemplateID),
-		AppJWT:     firstNonEmpty(options.JWTTemplateID, options.TemplateID, DefaultWebAppTemplateID),
+		AppUser:       firstNonEmpty(options.UserTemplateID, options.TemplateID, defaultUser),
+		AppService:    firstNonEmpty(options.ServiceTemplateID, options.TemplateID, DefaultWebAppTemplateID),
+		AppJWTService: firstNonEmpty(options.JWTTemplateID, options.ServiceTemplateID, options.TemplateID, DefaultWebAppTemplateID),
+		AppJWTUser:    firstNonEmpty(options.JWTTemplateID, options.TemplateID, DefaultWebAppTemplateID),
+		AppWorkload:   firstNonEmpty(options.JWTTemplateID, options.TemplateID, DefaultWebAppTemplateID),
 	}
 	for key, value := range values {
 		if strings.TrimSpace(value) == "" {
@@ -477,11 +532,21 @@ func resolveTemplateIDs(options Options, userClientType ClientType) (map[AppKind
 
 func uniqueIncludes(includes []AppKind) []AppKind {
 	if len(includes) == 0 {
-		includes = []AppKind{AppUser, AppService, AppJWT}
+		includes = defaultIncludes()
 	}
 	seen := map[AppKind]bool{}
 	out := make([]AppKind, 0, len(includes))
 	for _, include := range includes {
+		if include == AppJWT {
+			for _, expanded := range []AppKind{AppJWTService, AppJWTUser, AppWorkload} {
+				if seen[expanded] {
+					continue
+				}
+				seen[expanded] = true
+				out = append(out, expanded)
+			}
+			continue
+		}
 		if seen[include] {
 			continue
 		}
@@ -489,6 +554,10 @@ func uniqueIncludes(includes []AppKind) []AppKind {
 		out = append(out, include)
 	}
 	return out
+}
+
+func defaultIncludes() []AppKind {
+	return []AppKind{AppUser, AppService, AppJWTService, AppJWTUser, AppWorkload}
 }
 
 func normalizeEndpoint(value string) (string, error) {

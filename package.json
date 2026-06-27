@@ -1,6 +1,6 @@
 {
   "name": "@adrianmross/oci-identity-apps",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Plan OCI Identity Domains OAuth applications for CLI and automation flows",
   "license": "MIT",
   "homepage": "https://github.com/adrianmross/oci-identity-apps#readme",
