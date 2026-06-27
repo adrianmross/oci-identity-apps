@@ -32,16 +32,19 @@ Homebrew:
 brew install adrianmross/tap/oci-identity-apps
 ```
 
-npm:
+npmjs:
 
 ```bash
 npm install -g @adrianmross/oci-identity-apps
 ```
 
-GitHub Packages:
+GitHub Packages requires npm authentication, even for public packages. Use a
+GitHub token with `read:packages` for install, or `write:packages` for publish:
 
 ```bash
+export GITHUB_TOKEN="<github-token>"
 npm config set @adrianmross:registry https://npm.pkg.github.com
+npm config set //npm.pkg.github.com/:_authToken "$GITHUB_TOKEN"
 npm install -g @adrianmross/oci-identity-apps
 ```
 
