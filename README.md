@@ -24,7 +24,24 @@ The default service mode is generic. The `obp` preset adds Oracle Blockchain
 Platform notes, including the common CloudGate callback limitation and OBP
 post-create role checks.
 
-## Install From Source
+## Install
+
+Homebrew:
+
+```bash
+brew install adrianmross/tap/oci-identity-apps
+```
+
+npm:
+
+```bash
+npm install -g @adrianmross/oci-identity-apps
+```
+
+The npm package builds the Go CLI during install, so Go 1.25.6 or newer must be
+available on `PATH`.
+
+From source:
 
 ```bash
 go install github.com/adrianmross/oci-identity-apps/cmd/oci-identity-apps@latest
