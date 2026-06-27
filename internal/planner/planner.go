@@ -9,26 +9,30 @@ import (
 )
 
 const (
-	SchemaVersion                          = "oci-identity-apps.plan.v1"
-	IDCSAppSchema                          = "urn:ietf:params:scim:schemas:oracle:idcs:App"
-	DefaultWebAppTemplateID                = "CustomWebAppTemplateId"
-	DefaultPublicAppTemplateID             = "CustomBrowserMobileTemplateId"
-	DefaultCLIRedirectURL                  = "http://127.0.0.1:8180/callback"
-	AuthorizationCodeGrant                 = "authorization_code"
-	RefreshTokenGrant                      = "refresh_token"
-	ClientCredentialsGrant                 = "client_credentials"
-	JWTBearerGrant                         = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-	TokenExchangeGrant                     = "urn:ietf:params:oauth:grant-type:token-exchange"
-	ServiceGeneric             ServiceKind = "generic"
-	ServiceOBP                 ServiceKind = "obp"
-	AppUser                    AppKind     = "user"
-	AppService                 AppKind     = "service"
-	AppJWT                     AppKind     = "jwt"
-	AppJWTService              AppKind     = "jwt-service"
-	AppJWTUser                 AppKind     = "jwt-user"
-	AppWorkload                AppKind     = "workload"
-	ClientPublic               ClientType  = "public"
-	ClientConfidential         ClientType  = "confidential"
+	SchemaVersion                            = "oci-identity-apps.plan.v1"
+	IDCSAppSchema                            = "urn:ietf:params:scim:schemas:oracle:idcs:App"
+	DefaultWebAppTemplateID                  = "CustomWebAppTemplateId"
+	DefaultPublicAppTemplateID               = "CustomBrowserMobileTemplateId"
+	DefaultCLIRedirectURL                    = "http://127.0.0.1:8180/callback"
+	AuthorizationCodeGrant                   = "authorization_code"
+	RefreshTokenGrant                        = "refresh_token"
+	ClientCredentialsGrant                   = "client_credentials"
+	JWTBearerGrant                           = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+	TokenExchangeGrant                       = "urn:ietf:params:oauth:grant-type:token-exchange"
+	OAuthClientCertificateSchema             = "urn:ietf:params:scim:schemas:oracle:idcs:OAuthClientCertificate"
+	GrantSchema                              = "urn:ietf:params:scim:schemas:oracle:idcs:Grant"
+	PatchOpSchema                            = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+	AdministratorToAppGrant                  = "ADMINISTRATOR_TO_APP"
+	ServiceGeneric               ServiceKind = "generic"
+	ServiceOBP                   ServiceKind = "obp"
+	AppUser                      AppKind     = "user"
+	AppService                   AppKind     = "service"
+	AppJWT                       AppKind     = "jwt"
+	AppJWTService                AppKind     = "jwt-service"
+	AppJWTUser                   AppKind     = "jwt-user"
+	AppWorkload                  AppKind     = "workload"
+	ClientPublic                 ClientType  = "public"
+	ClientConfidential           ClientType  = "confidential"
 )
 
 type ServiceKind string
@@ -41,12 +45,15 @@ type Options struct {
 	Issuer             string
 	Scope              string
 	IDCSEndpoint       string
+	ResourceAppID      string
 	BaseAppName        string
 	BaseAppDisplayName string
 	AppPrefix          string
 	RedirectURL        string
 	Include            []AppKind
 	UserClientType     ClientType
+	AppRoleGrants      []AppRoleGrant
+	CertificateAlias   string
 	TemplateID         string
 	UserTemplateID     string
 	ServiceTemplateID  string
@@ -73,6 +80,7 @@ type Target struct {
 	IDCSEndpoint       string             `json:"idcsEndpoint"`
 	IDCSAdminURL       string             `json:"idcsAdminUrl"`
 	IDCSEndpointSource string             `json:"idcsEndpointSource"`
+	ResourceAppID      string             `json:"resourceAppId,omitempty"`
 	RedirectURL        string             `json:"redirectUrl"`
 	UserClientType     ClientType         `json:"userClientType"`
 	TemplateIDs        map[AppKind]string `json:"templateIds"`
@@ -93,15 +101,19 @@ type AppPlan struct {
 	AllowedGrants        []string       `json:"allowedGrants"`
 	RedirectURIs         []string       `json:"redirectUris"`
 	AllowedScopes        []string       `json:"allowedScopes"`
+	OCIPreCreate         []OCIAction    `json:"ociPreCreate,omitempty"`
 	OCICreatePayloadFile string         `json:"ociCreatePayloadFile"`
 	OCICreateCommand     string         `json:"ociCreateCommand"`
 	OCICreatePayload     AppCreateInput `json:"ociCreatePayload"`
+	OCIPostCreate        []OCIAction    `json:"ociPostCreate,omitempty"`
 	RequiredPostCreate   []string       `json:"requiredPostCreate"`
 	Usage                []string       `json:"usage"`
 }
 
 type ApplyPlan struct {
-	Commands []string `json:"commands"`
+	PreCreateCommands  []string `json:"preCreateCommands,omitempty"`
+	Commands           []string `json:"commands"`
+	PostCreateCommands []string `json:"postCreateCommands,omitempty"`
 }
 
 type ValidationPlan struct {
@@ -120,6 +132,7 @@ type AppCreateInput struct {
 	AllowedGrants      []string       `json:"allowedGrants"`
 	AllowedScopes      []AllowedScope `json:"allowedScopes"`
 	RedirectURIs       []string       `json:"redirectUris,omitempty"`
+	Certificates       []Certificate  `json:"certificates,omitempty"`
 	AllURLSchemes      *bool          `json:"allUrlSchemesAllowed,omitempty"`
 	BypassConsent      *bool          `json:"bypassConsent,omitempty"`
 	AllowOffline       *bool          `json:"allowOffline,omitempty"`
@@ -132,7 +145,52 @@ type TemplateRef struct {
 }
 
 type AllowedScope struct {
-	FQS string `json:"fqs"`
+	FQS             string `json:"fqs"`
+	IDOfDefiningApp string `json:"idOfDefiningApp,omitempty"`
+}
+
+type Certificate struct {
+	CertAlias string `json:"certAlias"`
+	KID       string `json:"kid,omitempty"`
+}
+
+type OCIAction struct {
+	Key         string `json:"key"`
+	Description string `json:"description"`
+	PayloadFile string `json:"payloadFile,omitempty"`
+	Command     string `json:"command"`
+	Payload     any    `json:"payload,omitempty"`
+}
+
+type AppRoleGrant struct {
+	DisplayName string `json:"displayName,omitempty"`
+	ID          string `json:"id"`
+}
+
+type OAuthClientCertificateInput struct {
+	Schemas               []string `json:"schemas"`
+	CertificateAlias      string   `json:"certificateAlias"`
+	X509Base64Certificate string   `json:"x509Base64Certificate"`
+}
+
+type GrantInput struct {
+	Schemas        []string       `json:"schemas"`
+	GrantMechanism string         `json:"grantMechanism"`
+	App            ResourceRef    `json:"app"`
+	Entitlement    EntitlementRef `json:"entitlement"`
+	Grantee        ResourceRef    `json:"grantee"`
+}
+
+type ResourceRef struct {
+	Value   string `json:"value"`
+	Display string `json:"display,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Ref     string `json:"$ref,omitempty"`
+}
+
+type EntitlementRef struct {
+	AttributeName  string `json:"attributeName"`
+	AttributeValue string `json:"attributeValue"`
 }
 
 func Build(options Options) (Plan, error) {
@@ -191,8 +249,11 @@ func Build(options Options) (Plan, error) {
 		platform:           strings.TrimSpace(options.Platform),
 		redirectURL:        redirectURL,
 		idcsEndpoint:       idcsEndpoint,
+		resourceAppID:      strings.TrimSpace(options.ResourceAppID),
 		templateIDs:        templateIDs,
 		userClientType:     userClientType,
+		appRoleGrants:      append([]AppRoleGrant{}, options.AppRoleGrants...),
+		certificateAlias:   strings.TrimSpace(options.CertificateAlias),
 		accessTokenExpiry:  positivePtr(options.AccessTokenExpiry),
 		refreshTokenExpiry: positivePtr(options.RefreshTokenExpiry),
 	}
@@ -203,8 +264,16 @@ func Build(options Options) (Plan, error) {
 	}
 
 	commands := make([]string, 0, len(apps))
+	preCreateCommands := []string{}
+	postCreateCommands := []string{}
 	for _, app := range apps {
+		for _, action := range app.OCIPreCreate {
+			preCreateCommands = append(preCreateCommands, action.Command)
+		}
 		commands = append(commands, app.OCICreateCommand)
+		for _, action := range app.OCIPostCreate {
+			postCreateCommands = append(postCreateCommands, action.Command)
+		}
 	}
 
 	return Plan{
@@ -217,16 +286,23 @@ func Build(options Options) (Plan, error) {
 			IDCSEndpoint:       idcsEndpoint,
 			IDCSAdminURL:       idcsEndpoint + "/admin/v1/",
 			IDCSEndpointSource: endpointSource(options.IDCSEndpoint),
+			ResourceAppID:      strings.TrimSpace(options.ResourceAppID),
 			RedirectURL:        redirectURL,
 			UserClientType:     userClientType,
 			TemplateIDs:        templateIDs,
 		},
 		BaseCloudServiceApp: baseCloudServiceApp(service, options),
 		Apps:                apps,
-		Apply:               ApplyPlan{Commands: commands},
-		Validation:          validationPlan(service),
+		Apply: ApplyPlan{
+			PreCreateCommands:  preCreateCommands,
+			Commands:           commands,
+			PostCreateCommands: postCreateCommands,
+		},
+		Validation: validationPlan(service),
 		SourceReferences: []string{
 			"OCI CLI: oci identity-domains app create",
+			"OCI CLI: oci identity-domains o-auth-client-certificate create",
+			"OCI CLI: oci identity-domains grant create",
 			"Oracle Identity Domains: OAuth client applications and allowed grants",
 			"Oracle Identity Domains: SCIM App resource",
 		},
@@ -269,6 +345,37 @@ func ParseClientType(value string) (ClientType, error) {
 	}
 }
 
+func ParseAppRoleGrants(value string) ([]AppRoleGrant, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	grants := make([]AppRoleGrant, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		display, id, ok := strings.Cut(part, "=")
+		if !ok {
+			id = display
+			display = ""
+		}
+		id = strings.TrimSpace(id)
+		display = strings.TrimSpace(display)
+		if id == "" {
+			return nil, fmt.Errorf("empty app role id in %q", value)
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		grants = append(grants, AppRoleGrant{DisplayName: display, ID: id})
+	}
+	return grants, nil
+}
+
 type buildContext struct {
 	service            ServiceKind
 	prefix             string
@@ -277,8 +384,11 @@ type buildContext struct {
 	platform           string
 	redirectURL        string
 	idcsEndpoint       string
+	resourceAppID      string
 	templateIDs        map[AppKind]string
 	userClientType     ClientType
+	appRoleGrants      []AppRoleGrant
+	certificateAlias   string
 	accessTokenExpiry  *int
 	refreshTokenExpiry *int
 }
@@ -295,6 +405,7 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			grants:             []string{AuthorizationCodeGrant, RefreshTokenGrant},
 			redirectURIs:       []string{ctx.redirectURL},
 			scope:              ctx.scope,
+			resourceAppID:      ctx.resourceAppID,
 			templateID:         ctx.templateIDs[AppUser],
 			idcsEndpoint:       ctx.idcsEndpoint,
 			allowOffline:       true,
@@ -316,10 +427,12 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			clientType:    ClientConfidential,
 			grants:        []string{ClientCredentialsGrant},
 			scope:         ctx.scope,
+			resourceAppID: ctx.resourceAppID,
 			templateID:    ctx.templateIDs[AppService],
 			idcsEndpoint:  ctx.idcsEndpoint,
 			bypassConsent: true,
 			accessExpiry:  ctx.accessTokenExpiry,
+			appRoleGrants: ctx.appRoleGrants,
 			requiredPostCreate: []string{
 				"Store the generated client id and secret in a secret manager or CI secret store.",
 				"Grant only the target service roles required by this automation identity.",
@@ -337,10 +450,14 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			clientType:    ClientConfidential,
 			grants:        []string{ClientCredentialsGrant},
 			scope:         ctx.scope,
+			resourceAppID: ctx.resourceAppID,
 			templateID:    ctx.templateIDs[AppJWTService],
 			idcsEndpoint:  ctx.idcsEndpoint,
 			bypassConsent: true,
 			accessExpiry:  ctx.accessTokenExpiry,
+			certAlias:     ctx.certificateAlias,
+			clientCert:    true,
+			appRoleGrants: ctx.appRoleGrants,
 			requiredPostCreate: []string{
 				"Register the client assertion signing certificate or public key trusted by the identity domain.",
 				"Grant only the target service roles required by this automation identity.",
@@ -348,6 +465,7 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			usage: []string{
 				"Use grant_type=client_credentials with client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer.",
 				"Use oci-context --flow jwt-client-credentials with --client-assertion-command or --private-key-file.",
+				"For OCI Identity Domains, set the local client assertion audience to https://identity.oraclecloud.com/ when the token endpoint rejects token-endpoint audiences.",
 			},
 		})
 	case AppJWTUser:
@@ -359,10 +477,12 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			clientType:    ClientConfidential,
 			grants:        []string{JWTBearerGrant},
 			scope:         ctx.scope,
+			resourceAppID: ctx.resourceAppID,
 			templateID:    ctx.templateIDs[AppJWTUser],
 			idcsEndpoint:  ctx.idcsEndpoint,
 			bypassConsent: true,
 			accessExpiry:  ctx.accessTokenExpiry,
+			appRoleGrants: ctx.appRoleGrants,
 			requiredPostCreate: []string{
 				"Register the assertion signing certificate or trust material required by the identity domain.",
 				"Map the asserted subject to an identity that has only the target service roles it needs.",
@@ -381,10 +501,12 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			clientType:    ClientConfidential,
 			grants:        []string{TokenExchangeGrant},
 			scope:         ctx.scope,
+			resourceAppID: ctx.resourceAppID,
 			templateID:    ctx.templateIDs[AppWorkload],
 			idcsEndpoint:  ctx.idcsEndpoint,
 			bypassConsent: true,
 			accessExpiry:  ctx.accessTokenExpiry,
+			appRoleGrants: ctx.appRoleGrants,
 			requiredPostCreate: []string{
 				"Register or configure the external workload issuer trust, audience, and claim mapping required by the identity domain.",
 				"Grant only the target service roles required by the workload identity.",
@@ -408,10 +530,14 @@ type appInput struct {
 	grants             []string
 	redirectURIs       []string
 	scope              string
+	resourceAppID      string
 	templateID         string
 	idcsEndpoint       string
 	allowOffline       bool
 	bypassConsent      bool
+	certAlias          string
+	clientCert         bool
+	appRoleGrants      []AppRoleGrant
 	accessExpiry       *int
 	refreshExpiry      *int
 	requiredPostCreate []string
@@ -429,8 +555,15 @@ func appPlan(input appInput) AppPlan {
 		IsOAuthClient:   true,
 		ClientType:      input.clientType,
 		AllowedGrants:   append([]string{}, input.grants...),
-		AllowedScopes:   []AllowedScope{{FQS: input.scope}},
+		AllowedScopes:   []AllowedScope{{FQS: input.scope, IDOfDefiningApp: input.resourceAppID}},
 		RedirectURIs:    append([]string{}, input.redirectURIs...),
+	}
+	preCreate := []OCIAction{}
+	postCreate := []OCIAction{}
+	if input.clientCert {
+		certAlias := firstNonEmpty(input.certAlias, input.name+"-cert")
+		payload.Certificates = []Certificate{{CertAlias: certAlias, KID: certAlias}}
+		preCreate = append(preCreate, oauthClientCertificateAction(input, certAlias))
 	}
 	if hasNonHTTPSRedirect(input.redirectURIs) {
 		payload.AllURLSchemes = boolPtr(true)
@@ -443,6 +576,11 @@ func appPlan(input appInput) AppPlan {
 	}
 	payload.AccessTokenExpiry = input.accessExpiry
 	payload.RefreshTokenExpiry = input.refreshExpiry
+	if input.resourceAppID != "" {
+		for _, grant := range input.appRoleGrants {
+			postCreate = append(postCreate, appRoleGrantAction(input, grant))
+		}
+	}
 
 	return AppPlan{
 		Key:                  input.kind,
@@ -453,11 +591,60 @@ func appPlan(input appInput) AppPlan {
 		AllowedGrants:        append([]string{}, input.grants...),
 		RedirectURIs:         append([]string{}, input.redirectURIs...),
 		AllowedScopes:        []string{input.scope},
+		OCIPreCreate:         preCreate,
 		OCICreatePayloadFile: payloadFile,
 		OCICreateCommand:     "oci identity-domains app create --endpoint " + shellQuote(input.idcsEndpoint) + " --from-json file://" + payloadFile,
 		OCICreatePayload:     payload,
+		OCIPostCreate:        postCreate,
 		RequiredPostCreate:   append([]string{}, input.requiredPostCreate...),
 		Usage:                append([]string{}, input.usage...),
+	}
+}
+
+func oauthClientCertificateAction(input appInput, certAlias string) OCIAction {
+	payloadFile := input.name + "-oauth-client-certificate.json"
+	return OCIAction{
+		Key:         "register-oauth-client-certificate",
+		Description: "Register the JWT client assertion public certificate before creating or patching the app certificate reference.",
+		PayloadFile: payloadFile,
+		Command: "oci identity-domains o-auth-client-certificate create --endpoint " + shellQuote(input.idcsEndpoint) +
+			" --from-json file://" + payloadFile,
+		Payload: OAuthClientCertificateInput{
+			Schemas:               []string{OAuthClientCertificateSchema},
+			CertificateAlias:      certAlias,
+			X509Base64Certificate: "<x509-base64-der-certificate>",
+		},
+	}
+}
+
+func appRoleGrantAction(input appInput, grant AppRoleGrant) OCIAction {
+	roleLabel := firstNonEmpty(grant.DisplayName, grant.ID)
+	payloadFile := input.name + "-grant-" + normalizePrefix(roleLabel) + ".json"
+	createdAppID := "<created-app-id>"
+	appRefBase := adminResourceBase(input.idcsEndpoint)
+	return OCIAction{
+		Key:         "grant-app-role",
+		Description: "Grant target service app role " + roleLabel + " to the created OAuth client app.",
+		PayloadFile: payloadFile,
+		Command: "oci identity-domains grant create --endpoint " + shellQuote(input.idcsEndpoint) +
+			" --from-json file://" + payloadFile,
+		Payload: GrantInput{
+			Schemas:        []string{GrantSchema},
+			GrantMechanism: AdministratorToAppGrant,
+			App: ResourceRef{
+				Value: input.resourceAppID,
+				Ref:   appRefBase + "/Apps/" + input.resourceAppID,
+			},
+			Entitlement: EntitlementRef{
+				AttributeName:  "appRoles",
+				AttributeValue: grant.ID,
+			},
+			Grantee: ResourceRef{
+				Value: createdAppID,
+				Type:  "App",
+				Ref:   appRefBase + "/Apps/" + createdAppID,
+			},
+		},
 	}
 }
 
@@ -503,7 +690,7 @@ func validationPlan(service ServiceKind) ValidationPlan {
 	if service == ServiceOBP {
 		after = append(after,
 			"Grant Oracle Blockchain Platform administrator access for deploy or console-admin APIs.",
-			"Grant REST_USER and REST proxy enrollment for REST proxy chaincode calls.",
+			"Grant REST_CLIENT and REST proxy enrollment for REST proxy chaincode calls.",
 		)
 	}
 	return ValidationPlan{BeforeApply: before, AfterApply: after}
@@ -617,6 +804,18 @@ func title(value string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func adminResourceBase(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return strings.TrimRight(endpoint, "/") + "/admin/v1"
+	}
+	host := parsed.Host
+	if !strings.Contains(host, ":") {
+		host += ":443"
+	}
+	return parsed.Scheme + "://" + host + "/admin/v1"
 }
 
 func required(value string, name string) (string, error) {

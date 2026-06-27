@@ -29,6 +29,13 @@ The default service mode is generic. The `obp` preset adds Oracle Blockchain
 Platform notes, including the common CloudGate callback limitation and OBP
 post-create role checks.
 
+The tool can also plan the service-app wiring that OCI Identity Domains needs
+after an OAuth client exists:
+
+- scope ownership through `idOfDefiningApp`
+- OAuth client certificate registration for JWT client assertion
+- direct app-role grants from a service/resource app to a companion OAuth app
+
 ## Install
 
 Homebrew:
@@ -91,12 +98,57 @@ oci-identity-apps plan \
   --service obp \
   --issuer https://idcs-example.identity.oraclecloud.com \
   --platform https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy \
+  --resource-app-id example-resource-app-id \
   --base-app-name example-obp_APPID \
   --redirect-url http://127.0.0.1:8180/callback \
   --format json > obp-identity-app-plan.json
 ```
 
 For the OBP preset, `--scope` defaults to `--platform`.
+
+To plan a JWT service-account app that can be granted OBP roles, pass the
+resource app id and the target app-role ids from the service-created OBP app:
+
+```bash
+oci-identity-apps plan \
+  --service obp \
+  --issuer https://idcs-example.identity.oraclecloud.com \
+  --platform https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy \
+  --resource-app-id example-resource-app-id \
+  --base-app-name example-obp_APPID \
+  --include jwt-service \
+  --app-role-grants ADMIN=example-admin-role-id,REST_CLIENT=example-rest-client-role-id \
+  --format json > obp-jwt-service-plan.json
+```
+
+That plan includes:
+
+- an `ociPreCreate` certificate registration payload for
+  `oci identity-domains o-auth-client-certificate create`
+- an app create payload whose allowed scope includes `idOfDefiningApp`
+- `ociPostCreate` grant payloads for
+  `oci identity-domains grant create`
+
+After the app is created, replace `<created-app-id>` in the grant payloads with
+the `data.id` returned by `oci identity-domains app create`.
+
+For OCI Identity Domains JWT client assertion, some domains require the local
+client assertion `aud` claim to be `https://identity.oraclecloud.com/` rather
+than the token endpoint URL. With `oci-context`, use:
+
+```bash
+oci-context auth token \
+  --service obp \
+  --flow jwt-client-credentials \
+  --token-endpoint https://idcs-example.identity.oraclecloud.com/oauth2/v1/token \
+  --client-id example-obp-service-jwt \
+  --scope https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy \
+  --private-key-file ./example-obp-service-jwt.key \
+  --key-id example-obp-service-jwt-cert \
+  --jwt-audience https://identity.oraclecloud.com/ \
+  --no-login \
+  --format raw
+```
 
 ## Output
 
@@ -106,9 +158,11 @@ Each planned app includes:
 - OAuth client type
 - allowed grants
 - allowed scopes
+- optional certificate registration payloads
 - redirect URIs when relevant
 - OCI CLI create payload filename
 - OCI CLI create command
+- optional app-role grant payloads
 - post-create checks
 
 Review and save each `ociCreatePayload` as its listed JSON file before running
