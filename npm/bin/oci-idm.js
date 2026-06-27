@@ -9,9 +9,7 @@ const binaryName = process.platform === "win32" ? "oci-idm.exe" : "oci-idm";
 const binaryPath = path.join(__dirname, binaryName);
 
 if (!fs.existsSync(binaryPath)) {
-  console.error(
-    "oci-idm native binary is missing. Run `npm rebuild @adrianmross/oci-idm` and ensure Go is installed."
-  );
+  console.error("oci-idm native binary is missing. Run `npm rebuild @adrianmross/oci-idm` and ensure Go is installed.");
   process.exit(1);
 }
 

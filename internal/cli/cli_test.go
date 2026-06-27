@@ -40,7 +40,7 @@ func TestPlanJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if payload["schemaVersion"] != "oci-identity-apps.plan.v1" {
+	if payload["schemaVersion"] != "oci-idm.plan.v1" {
 		t.Fatalf("unexpected schema version: %#v", payload["schemaVersion"])
 	}
 	apps := payload["apps"].([]any)
@@ -128,6 +128,9 @@ func TestMaterializeAndValidate(t *testing.T) {
 		"apply.sh",
 		"validate.sh",
 		"cleanup.sh",
+		"oci-context.handoff.json",
+		"oci-context-token-services.yml",
+		"oci-context-token-commands.sh",
 	} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("expected %s: %v", name, err)
@@ -169,5 +172,73 @@ func TestMaterializeAndValidate(t *testing.T) {
 	}, &applyOut, &stderr)
 	if code == 0 {
 		t.Fatal("expected execute mode to fail closed")
+	}
+}
+
+func TestHandoffOCIContextYAML(t *testing.T) {
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	var planOut bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"plan",
+		"--service", "obp",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--platform", "https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy",
+		"--resource-app-id", "resource-app-id",
+		"--base-app-name", "example-obp_APPID",
+		"--include", "user,jwt-service",
+		"--app-role-grants", "ADMIN=admin-role-id",
+	}, &planOut, &stderr)
+	if code != 0 {
+		t.Fatalf("plan failed with %d: %s", code, stderr.String())
+	}
+	if err := os.WriteFile(planPath, planOut.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var handoffOut bytes.Buffer
+	code = Run([]string{
+		"handoff",
+		"--plan", planPath,
+		"--target", "oci-context",
+		"--format", "yaml",
+	}, &handoffOut, &stderr)
+	if code != 0 {
+		t.Fatalf("handoff failed with %d: %s", code, stderr.String())
+	}
+	out := handoffOut.String()
+	for _, want := range []string{
+		"token_services:",
+		"name: 'obp'",
+		"flow: 'authorization-code'",
+		"name: 'obp-jwt-service'",
+		"flow: 'jwt-client-credentials'",
+		"jwt_audience: 'https://identity.oraclecloud.com/'",
+		"private_key_file_env:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in handoff output:\n%s", want, out)
+		}
+	}
+
+	var commandsOut bytes.Buffer
+	code = Run([]string{
+		"handoff",
+		"--plan", planPath,
+		"--target", "oci-context",
+		"--format", "commands",
+	}, &commandsOut, &stderr)
+	if code != 0 {
+		t.Fatalf("handoff commands failed with %d: %s", code, stderr.String())
+	}
+	commands := commandsOut.String()
+	if strings.Contains(commands, "--flow 'authorization-code' --issuer") &&
+		strings.Contains(strings.Split(commands, "--flow 'authorization-code'")[1], "--no-login") &&
+		strings.Index(commands, "--no-login") < strings.Index(commands, "--flow 'jwt-client-credentials'") {
+		t.Fatalf("authorization-code command should not include --no-login:\n%s", commands)
+	}
+	if !strings.Contains(commands, "--flow 'jwt-client-credentials'") || !strings.Contains(commands, "--no-login") {
+		t.Fatalf("jwt-client-credentials command should include --no-login:\n%s", commands)
 	}
 }

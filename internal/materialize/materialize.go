@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/adrianmross/oci-identity-apps/internal/handoff"
 	"github.com/adrianmross/oci-identity-apps/internal/planner"
 )
 
@@ -75,9 +76,10 @@ func FromPlan(plan planner.Plan, outDir string) (Result, error) {
 		}
 	}
 	scripts := map[string]string{
-		"apply.sh":    applyScript(plan),
-		"validate.sh": validateScript(plan),
-		"cleanup.sh":  cleanupScript(plan),
+		"apply.sh":                      applyScript(plan),
+		"validate.sh":                   validateScript(plan),
+		"cleanup.sh":                    cleanupScript(plan),
+		"oci-context-token-commands.sh": handoff.TokenCommandsScript(handoff.ForOCIContext(plan)),
 	}
 	for name, content := range scripts {
 		path := filepath.Join(outDir, name)
@@ -86,6 +88,19 @@ func FromPlan(plan planner.Plan, outDir string) (Result, error) {
 		}
 		result.Files = append(result.Files, path)
 	}
+	ociContextHandoff := handoff.ForOCIContext(plan)
+	handoffJSON, err := handoff.JSON(ociContextHandoff)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "oci-context.handoff.json"), handoffJSON, 0o644); err != nil {
+		return Result{}, err
+	}
+	result.Files = append(result.Files, filepath.Join(outDir, "oci-context.handoff.json"))
+	if err := os.WriteFile(filepath.Join(outDir, "oci-context-token-services.yml"), []byte(handoff.TokenServicesYAML(ociContextHandoff)), 0o644); err != nil {
+		return Result{}, err
+	}
+	result.Files = append(result.Files, filepath.Join(outDir, "oci-context-token-services.yml"))
 	return result, nil
 }
 
