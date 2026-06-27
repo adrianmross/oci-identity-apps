@@ -3,8 +3,21 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestVersion(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"version"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run failed with %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "dev") {
+		t.Fatalf("unexpected version output: %q", stdout.String())
+	}
+}
 
 func TestPlanJSON(t *testing.T) {
 	var stdout bytes.Buffer

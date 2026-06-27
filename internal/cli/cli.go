@@ -10,7 +10,11 @@ import (
 	"github.com/adrianmross/oci-identity-apps/internal/planner"
 )
 
-const version = "dev"
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -23,7 +27,7 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		writeRootHelp(stdout)
 		return 0
 	case "version", "-v", "--version":
-		fmt.Fprintln(stdout, version)
+		fmt.Fprintln(stdout, versionString())
 		return 0
 	case "plan":
 		if err := runPlan(args[1:], stdout); err != nil {
@@ -35,6 +39,17 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		return 1
 	}
+}
+
+func versionString() string {
+	parts := []string{version}
+	if commit != "" && commit != "none" {
+		parts = append(parts, "commit="+commit)
+	}
+	if date != "" && date != "unknown" {
+		parts = append(parts, "built="+date)
+	}
+	return strings.Join(parts, " ")
 }
 
 func runPlan(args []string, stdout io.Writer) error {
