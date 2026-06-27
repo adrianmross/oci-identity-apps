@@ -23,6 +23,8 @@ type Options struct {
 	CandidateAppID string
 	KnownGoodAppID string
 	Profile        string
+	OCIConfigPath  string
+	Region         string
 }
 
 type Plan struct {
@@ -33,6 +35,8 @@ type Plan struct {
 	CandidateAppID string      `json:"candidateAppId,omitempty"`
 	KnownGoodAppID string      `json:"knownGoodAppId,omitempty"`
 	Profile        string      `json:"profile,omitempty"`
+	OCIConfigPath  string      `json:"ociConfigPath,omitempty"`
+	Region         string      `json:"region,omitempty"`
 	Commands       []Command   `json:"commands"`
 	Checklist      []string    `json:"checklist"`
 	Interpretation []string    `json:"interpretation"`
@@ -62,31 +66,30 @@ func Build(options Options) (Plan, error) {
 	}
 	candidateAppID := strings.TrimSpace(options.CandidateAppID)
 	knownGoodAppID := strings.TrimSpace(options.KnownGoodAppID)
-	profile := strings.TrimSpace(options.Profile)
-
-	profileArg := ""
-	if profile != "" {
-		profileArg = " --profile " + shellQuote(profile)
+	defaults := commandDefaults{
+		Profile:       strings.TrimSpace(options.Profile),
+		OCIConfigPath: strings.TrimSpace(options.OCIConfigPath),
+		Region:        strings.TrimSpace(options.Region),
 	}
 	commands := []Command{
-		appGetCommand("get-resource-app", "Inspect the service/resource app, including role projections and account-management references.", endpoint, profileArg, resourceAppID),
-		grantsForResourceCommand(endpoint, profileArg, resourceAppID),
-		accountMgmtForResourceCommand(endpoint, profileArg, resourceAppID),
+		appGetCommand("get-resource-app", "Inspect the service/resource app, including role projections and account-management references.", endpoint, defaults, resourceAppID),
+		grantsForResourceCommand(endpoint, defaults, resourceAppID),
+		accountMgmtForResourceCommand(endpoint, defaults, resourceAppID),
 	}
 	if candidateAppID != "" {
 		commands = append(commands,
-			appGetCommand("get-candidate-app", "Inspect the generated or candidate OAuth client app.", endpoint, profileArg, candidateAppID),
-			grantsForGranteeCommand("search-grants-for-candidate", "Find direct service app-role grants assigned to the candidate app.", endpoint, profileArg, candidateAppID),
-			userByNameCommand("search-same-name-user-for-candidate", "Find a same-name user for services that authorize client-credentials tokens by token sub/client_id.", endpoint, profileArg, "<candidate-client-id-or-app-name>"),
-			grantsForGranteeCommand("search-grants-for-candidate-user", "Find direct service app-role grants assigned to the same-name candidate user.", endpoint, profileArg, "<candidate-user-id>"),
+			appGetCommand("get-candidate-app", "Inspect the generated or candidate OAuth client app.", endpoint, defaults, candidateAppID),
+			grantsForGranteeCommand("search-grants-for-candidate", "Find direct service app-role grants assigned to the candidate app.", endpoint, defaults, candidateAppID),
+			userByNameCommand("search-same-name-user-for-candidate", "Find a same-name user for services that authorize client-credentials tokens by token sub/client_id.", endpoint, defaults, "<candidate-client-id-or-app-name>"),
+			grantsForGranteeCommand("search-grants-for-candidate-user", "Find direct service app-role grants assigned to the same-name candidate user.", endpoint, defaults, "<candidate-user-id>"),
 		)
 	}
 	if knownGoodAppID != "" {
 		commands = append(commands,
-			appGetCommand("get-known-good-app", "Inspect a known-working client app for comparison.", endpoint, profileArg, knownGoodAppID),
-			grantsForGranteeCommand("search-grants-for-known-good", "Find direct service app-role grants assigned to the known-working app.", endpoint, profileArg, knownGoodAppID),
-			userByNameCommand("search-same-name-user-for-known-good", "Find the same-name user for a known-working client app.", endpoint, profileArg, "<known-good-client-id-or-app-name>"),
-			grantsForGranteeCommand("search-grants-for-known-good-user", "Find direct service app-role grants assigned to the known-good same-name user.", endpoint, profileArg, "<known-good-user-id>"),
+			appGetCommand("get-known-good-app", "Inspect a known-working client app for comparison.", endpoint, defaults, knownGoodAppID),
+			grantsForGranteeCommand("search-grants-for-known-good", "Find direct service app-role grants assigned to the known-working app.", endpoint, defaults, knownGoodAppID),
+			userByNameCommand("search-same-name-user-for-known-good", "Find the same-name user for a known-working client app.", endpoint, defaults, "<known-good-client-id-or-app-name>"),
+			grantsForGranteeCommand("search-grants-for-known-good-user", "Find direct service app-role grants assigned to the known-good same-name user.", endpoint, defaults, "<known-good-user-id>"),
 		)
 	}
 
@@ -118,64 +121,70 @@ func Build(options Options) (Plan, error) {
 		ResourceAppID:  resourceAppID,
 		CandidateAppID: candidateAppID,
 		KnownGoodAppID: knownGoodAppID,
-		Profile:        profile,
+		Profile:        defaults.Profile,
+		OCIConfigPath:  defaults.OCIConfigPath,
+		Region:         defaults.Region,
 		Commands:       commands,
 		Checklist:      checklist,
 		Interpretation: interpretation,
 	}, nil
 }
 
-func appGetCommand(key, description, endpoint, profileArg, appID string) Command {
+func appGetCommand(key, description, endpoint string, defaults commandDefaults, appID string) Command {
 	return Command{
 		Key:         key,
 		Description: description,
-		Command: "oci identity-domains app get --endpoint " + shellQuote(endpoint) + profileArg +
-			" --app-id " + shellQuote(appID) +
-			" --attributes 'id,name,displayName,active,clientType,isOAuthClient,isOAuthResource,allowedGrants,allowedScopes,redirectUris,certificates,accounts,grants,appRoles,grantedAppRoles,userRoles,basedOnTemplate,serviceTypeURN,audience,trustScope,tags'",
+		Command: identityDomainsCommand(endpoint, defaults, "app", "get",
+			"--app-id "+shellQuote(appID),
+			"--attributes 'id,name,displayName,active,clientType,isOAuthClient,isOAuthResource,allowedGrants,allowedScopes,redirectUris,certificates,accounts,grants,appRoles,grantedAppRoles,userRoles,basedOnTemplate,serviceTypeURN,audience,trustScope,tags'"),
 	}
 }
 
-func grantsForResourceCommand(endpoint, profileArg, resourceAppID string) Command {
+func grantsForResourceCommand(endpoint string, defaults commandDefaults, resourceAppID string) Command {
 	return Command{
 		Key:         "search-grants-for-resource-app",
 		Description: "Find all direct grantees for the service/resource app roles.",
-		Command: "oci identity-domains grants search --endpoint " + shellQuote(endpoint) + profileArg +
-			" --schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'" +
-			" --filter " + shellQuote("app.value eq \""+resourceAppID+"\"") +
-			" --attributes '[\"id\",\"app\",\"entitlement\",\"grantee\",\"grantMechanism\",\"isFulfilled\"]' --count 1000",
+		Command: identityDomainsCommand(endpoint, defaults, "grants", "search",
+			"--schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'",
+			"--filter "+shellQuote("app.value eq \""+resourceAppID+"\""),
+			"--attributes '[\"id\",\"app\",\"entitlement\",\"grantee\",\"grantMechanism\",\"isFulfilled\"]'",
+			"--count 1000"),
 	}
 }
 
-func grantsForGranteeCommand(key, description, endpoint, profileArg, appID string) Command {
+func grantsForGranteeCommand(key, description, endpoint string, defaults commandDefaults, appID string) Command {
 	return Command{
 		Key:         key,
 		Description: description,
-		Command: "oci identity-domains grants search --endpoint " + shellQuote(endpoint) + profileArg +
-			" --schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'" +
-			" --filter " + shellQuote("grantee.value eq \""+appID+"\"") +
-			" --attributes '[\"id\",\"app\",\"entitlement\",\"grantee\",\"grantMechanism\",\"isFulfilled\"]' --count 1000",
+		Command: identityDomainsCommand(endpoint, defaults, "grants", "search",
+			"--schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'",
+			"--filter "+shellQuote("grantee.value eq \""+appID+"\""),
+			"--attributes '[\"id\",\"app\",\"entitlement\",\"grantee\",\"grantMechanism\",\"isFulfilled\"]'",
+			"--count 1000"),
 	}
 }
 
-func userByNameCommand(key, description, endpoint, profileArg, userName string) Command {
+func userByNameCommand(key, description, endpoint string, defaults commandDefaults, userName string) Command {
 	return Command{
 		Key:         key,
 		Description: description,
-		Command: "oci identity-domains users search --endpoint " + shellQuote(endpoint) + profileArg +
-			" --schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'" +
-			" --filter " + shellQuote("userName eq \""+userName+"\"") +
-			" --attributes '[\"id\",\"userName\",\"displayName\",\"active\",\"roles\"]' --count 10",
+		Command: identityDomainsCommand(endpoint, defaults, "users", "search",
+			"--schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'",
+			"--filter "+shellQuote("userName eq \""+userName+"\""),
+			"--attributes '[\"id\",\"userName\",\"displayName\",\"active\",\"roles\"]'",
+			"--count 10"),
 	}
 }
 
-func accountMgmtForResourceCommand(endpoint, profileArg, resourceAppID string) Command {
+func accountMgmtForResourceCommand(endpoint string, defaults commandDefaults, resourceAppID string) Command {
 	return Command{
 		Key:         "search-account-mgmt-for-resource-app",
 		Description: "Inspect AccountMgmtInfo rows for the resource app; these are service-managed references, not app-role grants.",
-		Command: "oci identity-domains account-mgmt-infos search --endpoint " + shellQuote(endpoint) + profileArg +
-			" --schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'" +
-			" --filter " + shellQuote("app.value eq \""+resourceAppID+"\"") +
-			" --attributes '[\"id\",\"uid\",\"name\",\"active\",\"accountType\",\"isAccount\",\"app\",\"owner\",\"resourceType\",\"objectClass\",\"syncSituation\",\"syncResponse\"]' --count 1000",
+		Command: identityDomainsCommand(endpoint, defaults, "account-mgmt-infos", "search",
+			"--schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'",
+			"--filter "+shellQuote("app.value eq \""+resourceAppID+"\""),
+			"--attributes '[\"id\",\"uid\",\"name\",\"active\",\"accountType\",\"isAccount\",\"app\",\"owner\",\"resourceType\",\"objectClass\",\"syncSituation\",\"syncResponse\"]'",
+			"--count 1000"),
 	}
 }
 
@@ -205,4 +214,30 @@ func firstNonEmpty(values ...string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+type commandDefaults struct {
+	Profile       string
+	OCIConfigPath string
+	Region        string
+}
+
+func identityDomainsCommand(endpoint string, defaults commandDefaults, resource string, action string, args ...string) string {
+	parts := []string{
+		"oci identity-domains",
+		resource,
+		action,
+		"--endpoint " + shellQuote(endpoint),
+	}
+	if defaults.Profile != "" {
+		parts = append(parts, "--profile "+shellQuote(defaults.Profile))
+	}
+	if defaults.OCIConfigPath != "" {
+		parts = append(parts, "--config-file "+shellQuote(defaults.OCIConfigPath))
+	}
+	if defaults.Region != "" {
+		parts = append(parts, "--region "+shellQuote(defaults.Region))
+	}
+	parts = append(parts, args...)
+	return strings.Join(parts, " ")
 }

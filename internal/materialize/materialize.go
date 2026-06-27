@@ -171,14 +171,14 @@ func cleanupScript(plan planner.Plan) string {
 			action := app.OCIPostCreate[j]
 			switch action.Key {
 			case "grant-app-role", "grant-principal-user-app-role":
-				b.WriteString("oci identity-domains grant delete --endpoint " + shellQuote(plan.Target.IDCSEndpoint) + " --grant-id <grant-id-for-" + action.PayloadFile + "> --force\n")
+				b.WriteString(planner.IdentityDomainsCommand(plan.Target.IDCSEndpoint, plan.Target.OCIProfile, plan.Target.OCIConfigPath, plan.Target.OCIRegion, "grant", "delete", "--grant-id <grant-id-for-"+action.PayloadFile+">", "--force") + "\n")
 			case "create-principal-user":
-				b.WriteString("oci identity-domains user delete --endpoint " + shellQuote(plan.Target.IDCSEndpoint) + " --user-id <principal-user-id-for-" + app.Name + "> --force\n")
+				b.WriteString(planner.IdentityDomainsCommand(plan.Target.IDCSEndpoint, plan.Target.OCIProfile, plan.Target.OCIConfigPath, plan.Target.OCIRegion, "user", "delete", "--user-id <principal-user-id-for-"+app.Name+">", "--force") + "\n")
 			}
 		}
-		b.WriteString("oci identity-domains app delete --endpoint " + shellQuote(plan.Target.IDCSEndpoint) + " --app-id <created-app-id-for-" + app.Name + "> --force\n")
+		b.WriteString(planner.IdentityDomainsCommand(plan.Target.IDCSEndpoint, plan.Target.OCIProfile, plan.Target.OCIConfigPath, plan.Target.OCIRegion, "app", "delete", "--app-id <created-app-id-for-"+app.Name+">", "--force") + "\n")
 		for range app.OCIPreCreate {
-			b.WriteString("oci identity-domains o-auth-client-certificate delete --endpoint " + shellQuote(plan.Target.IDCSEndpoint) + " --o-auth-client-certificate-id <certificate-id> --force\n")
+			b.WriteString(planner.IdentityDomainsCommand(plan.Target.IDCSEndpoint, plan.Target.OCIProfile, plan.Target.OCIConfigPath, plan.Target.OCIRegion, "o-auth-client-certificate", "delete", "--o-auth-client-certificate-id <certificate-id>", "--force") + "\n")
 		}
 	}
 	return b.String()

@@ -9,11 +9,13 @@ import (
 const SchemaVersion = "oci-idm.discovery.v1"
 
 type Options struct {
-	Issuer       string
-	IDCSEndpoint string
-	Query        string
-	AppID        string
-	Profile      string
+	Issuer        string
+	IDCSEndpoint  string
+	Query         string
+	AppID         string
+	Profile       string
+	OCIConfigPath string
+	Region        string
 }
 
 type Plan struct {
@@ -22,6 +24,8 @@ type Plan struct {
 	Query         string    `json:"query,omitempty"`
 	AppID         string    `json:"appId,omitempty"`
 	Profile       string    `json:"profile,omitempty"`
+	OCIConfigPath string    `json:"ociConfigPath,omitempty"`
+	Region        string    `json:"region,omitempty"`
 	Commands      []Command `json:"commands"`
 	NextSteps     []string  `json:"nextSteps"`
 }
@@ -37,9 +41,10 @@ func Build(options Options) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	profileArg := ""
-	if strings.TrimSpace(options.Profile) != "" {
-		profileArg = " --profile " + shellQuote(strings.TrimSpace(options.Profile))
+	defaults := commandDefaults{
+		Profile:       strings.TrimSpace(options.Profile),
+		OCIConfigPath: strings.TrimSpace(options.OCIConfigPath),
+		Region:        strings.TrimSpace(options.Region),
 	}
 	query := strings.TrimSpace(options.Query)
 	appID := strings.TrimSpace(options.AppID)
@@ -49,11 +54,11 @@ func Build(options Options) (Plan, error) {
 		commands = append(commands, Command{
 			Key:         "search-apps",
 			Description: "Find service/resource apps and existing companion OAuth apps by display name or app name.",
-			Command: "oci identity-domains apps search --endpoint " + shellQuote(endpoint) + profileArg +
-				" --schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'" +
-				" --filter " + shellQuote(filter) +
-				" --attributes '[\"id\",\"displayName\",\"name\",\"clientType\",\"allowedGrants\",\"allowedScopes\",\"scopes\",\"userRoles\",\"grantedAppRoles\",\"certificates\",\"isOAuthClient\",\"isOAuthResource\"]'" +
-				" --count 50",
+			Command: identityDomainsCommand(endpoint, defaults, "apps", "search",
+				"--schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'",
+				"--filter "+shellQuote(filter),
+				"--attributes '[\"id\",\"displayName\",\"name\",\"clientType\",\"allowedGrants\",\"allowedScopes\",\"scopes\",\"userRoles\",\"grantedAppRoles\",\"certificates\",\"isOAuthClient\",\"isOAuthResource\"]'",
+				"--count 50"),
 		})
 	}
 	if appID != "" {
@@ -61,17 +66,18 @@ func Build(options Options) (Plan, error) {
 			Command{
 				Key:         "get-resource-app",
 				Description: "Inspect the service/resource app for scopes, app roles, and Cloud service metadata.",
-				Command: "oci identity-domains app get --endpoint " + shellQuote(endpoint) + profileArg +
-					" --app-id " + shellQuote(appID) +
-					" --attributes 'id,displayName,name,allowedGrants,allowedScopes,scopes,userRoles,grantedAppRoles,accounts,audience,serviceTypeURN,isOAuthClient,isOAuthResource'",
+				Command: identityDomainsCommand(endpoint, defaults, "app", "get",
+					"--app-id "+shellQuote(appID),
+					"--attributes 'id,displayName,name,allowedGrants,allowedScopes,scopes,userRoles,grantedAppRoles,accounts,audience,serviceTypeURN,isOAuthClient,isOAuthResource'"),
 			},
 			Command{
 				Key:         "search-grants-for-resource-app",
 				Description: "Find grants where this service/resource app is the granted server app.",
-				Command: "oci identity-domains grants search --endpoint " + shellQuote(endpoint) + profileArg +
-					" --schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'" +
-					" --filter " + shellQuote("app.value eq \""+appID+"\"") +
-					" --attributes '[\"id\",\"app\",\"entitlement\",\"grantee\",\"grantMechanism\",\"isFulfilled\"]' --count 100",
+				Command: identityDomainsCommand(endpoint, defaults, "grants", "search",
+					"--schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'",
+					"--filter "+shellQuote("app.value eq \""+appID+"\""),
+					"--attributes '[\"id\",\"app\",\"entitlement\",\"grantee\",\"grantMechanism\",\"isFulfilled\"]'",
+					"--count 100"),
 			},
 		)
 	}
@@ -81,6 +87,8 @@ func Build(options Options) (Plan, error) {
 		Query:         query,
 		AppID:         appID,
 		Profile:       strings.TrimSpace(options.Profile),
+		OCIConfigPath: strings.TrimSpace(options.OCIConfigPath),
+		Region:        strings.TrimSpace(options.Region),
 		Commands:      commands,
 		NextSteps: []string{
 			"Use the service/resource app id as --resource-app-id.",
@@ -117,4 +125,30 @@ func firstNonEmpty(values ...string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+type commandDefaults struct {
+	Profile       string
+	OCIConfigPath string
+	Region        string
+}
+
+func identityDomainsCommand(endpoint string, defaults commandDefaults, resource string, action string, args ...string) string {
+	parts := []string{
+		"oci identity-domains",
+		resource,
+		action,
+		"--endpoint " + shellQuote(endpoint),
+	}
+	if defaults.Profile != "" {
+		parts = append(parts, "--profile "+shellQuote(defaults.Profile))
+	}
+	if defaults.OCIConfigPath != "" {
+		parts = append(parts, "--config-file "+shellQuote(defaults.OCIConfigPath))
+	}
+	if defaults.Region != "" {
+		parts = append(parts, "--region "+shellQuote(defaults.Region))
+	}
+	parts = append(parts, args...)
+	return strings.Join(parts, " ")
 }

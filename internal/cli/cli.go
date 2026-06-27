@@ -128,6 +128,12 @@ func runPlan(args []string, stdout io.Writer) error {
 	jwtTemplateID := flags.String("jwt-template-id", "", "template id for the JWT assertion app")
 	accessTokenExpiry := flags.Int("access-token-expiry", 0, "optional access token expiry in seconds")
 	refreshTokenExpiry := flags.Int("refresh-token-expiry", 0, "optional refresh token expiry in seconds")
+	profile := flags.String("profile", "", "OCI CLI profile for generated Identity Domains commands; defaults from current oci-context")
+	ociConfigPath := flags.String("oci-config-file", "", "OCI CLI config file for generated commands; defaults from current oci-context")
+	region := flags.String("region", "", "OCI region for generated commands; defaults from current oci-context")
+	useOCIContext := flags.Bool("oci-context", true, "read current oci-context and token-service defaults for omitted values")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
+	ociContextService := flags.String("oci-context-service", "", "oci-context token service used for issuer/scope defaults; defaults to --service for non-generic services")
 	format := flags.String("format", "json", "output format: json or text")
 
 	if err := flags.Parse(args); err != nil {
@@ -157,6 +163,31 @@ func runPlan(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	visited := collectVisitedFlags(flags)
+	contextName := ""
+	if *useOCIContext {
+		serviceName := firstNonEmpty(*ociContextService, defaultOCIContextServiceName(*service))
+		defaults := loadOCIContextDefaults(*ociContextBin, serviceName)
+		contextName = defaults.ContextName
+		if !explicitFlags(visited, "issuer") && strings.TrimSpace(*issuer) == "" {
+			*issuer = defaults.Issuer
+		}
+		if !explicitFlags(visited, "scope") && strings.TrimSpace(*scope) == "" {
+			*scope = defaults.Scope
+		}
+		if !explicitFlags(visited, "platform") && strings.TrimSpace(*platform) == "" && planner.ServiceKind(*service) == planner.ServiceOBP {
+			*platform = defaults.Scope
+		}
+		if !explicitFlags(visited, "profile") && strings.TrimSpace(*profile) == "" {
+			*profile = defaults.Profile
+		}
+		if !explicitFlags(visited, "oci-config-file") && strings.TrimSpace(*ociConfigPath) == "" {
+			*ociConfigPath = defaults.OCIConfigPath
+		}
+		if !explicitFlags(visited, "region") && strings.TrimSpace(*region) == "" {
+			*region = defaults.Region
+		}
+	}
 	plan, err := planner.Build(planner.Options{
 		Service:              planner.ServiceKind(*service),
 		Platform:             *platform,
@@ -181,6 +212,10 @@ func runPlan(args []string, stdout io.Writer) error {
 		JWTTemplateID:        *jwtTemplateID,
 		AccessTokenExpiry:    *accessTokenExpiry,
 		RefreshTokenExpiry:   *refreshTokenExpiry,
+		OCIContext:           contextName,
+		OCIProfile:           *profile,
+		OCIConfigPath:        *ociConfigPath,
+		OCIRegion:            *region,
 	})
 	if err != nil {
 		return err
@@ -233,7 +268,12 @@ func runDiscover(args []string, stdout io.Writer) error {
 	idcsEndpoint := flags.String("idcs-endpoint", "", "OCI Identity Domains base endpoint")
 	query := flags.String("query", "", "service/app search text")
 	appID := flags.String("app-id", "", "service/resource app id to inspect")
-	profile := flags.String("profile", "", "optional OCI CLI profile to include in generated commands")
+	profile := flags.String("profile", "", "optional OCI CLI profile to include in generated commands; defaults from current oci-context")
+	ociConfigPath := flags.String("oci-config-file", "", "OCI CLI config file to include in generated commands; defaults from current oci-context")
+	region := flags.String("region", "", "OCI region to include in generated commands; defaults from current oci-context")
+	useOCIContext := flags.Bool("oci-context", true, "read current oci-context defaults for omitted values")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
+	ociContextService := flags.String("oci-context-service", string(planner.ServiceOBP), "oci-context token service used for issuer defaults")
 	format := flags.String("format", "json", "output format: json or text")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -241,12 +281,30 @@ func runDiscover(args []string, stdout io.Writer) error {
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
+	visited := collectVisitedFlags(flags)
+	if *useOCIContext {
+		defaults := loadOCIContextDefaults(*ociContextBin, *ociContextService)
+		if !explicitFlags(visited, "issuer") && strings.TrimSpace(*issuer) == "" {
+			*issuer = defaults.Issuer
+		}
+		if !explicitFlags(visited, "profile") && strings.TrimSpace(*profile) == "" {
+			*profile = defaults.Profile
+		}
+		if !explicitFlags(visited, "oci-config-file") && strings.TrimSpace(*ociConfigPath) == "" {
+			*ociConfigPath = defaults.OCIConfigPath
+		}
+		if !explicitFlags(visited, "region") && strings.TrimSpace(*region) == "" {
+			*region = defaults.Region
+		}
+	}
 	plan, err := discovery.Build(discovery.Options{
-		Issuer:       *issuer,
-		IDCSEndpoint: *idcsEndpoint,
-		Query:        *query,
-		AppID:        *appID,
-		Profile:      *profile,
+		Issuer:        *issuer,
+		IDCSEndpoint:  *idcsEndpoint,
+		Query:         *query,
+		AppID:         *appID,
+		Profile:       *profile,
+		OCIConfigPath: *ociConfigPath,
+		Region:        *region,
 	})
 	if err != nil {
 		return err
@@ -276,13 +334,35 @@ func runDiagnose(args []string, stdout io.Writer) error {
 	resourceAppID := flags.String("resource-app-id", "", "target service/resource app id")
 	candidateAppID := flags.String("candidate-app-id", "", "candidate OAuth client app id")
 	knownGoodAppID := flags.String("known-good-app-id", "", "optional known-working OAuth client app id to compare")
-	profile := flags.String("profile", "", "optional OCI CLI profile to include in generated commands")
+	profile := flags.String("profile", "", "optional OCI CLI profile to include in generated commands; defaults from current oci-context")
+	ociConfigPath := flags.String("oci-config-file", "", "OCI CLI config file to include in generated commands; defaults from current oci-context")
+	region := flags.String("region", "", "OCI region to include in generated commands; defaults from current oci-context")
+	useOCIContext := flags.Bool("oci-context", true, "read current oci-context and token-service defaults for omitted values")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
+	ociContextService := flags.String("oci-context-service", "", "oci-context token service used for issuer defaults; defaults to --service for non-generic services")
 	format := flags.String("format", "json", "output format: json or text")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	visited := collectVisitedFlags(flags)
+	if *useOCIContext {
+		serviceName := firstNonEmpty(*ociContextService, defaultOCIContextServiceName(*service))
+		defaults := loadOCIContextDefaults(*ociContextBin, serviceName)
+		if !explicitFlags(visited, "issuer") && strings.TrimSpace(*issuer) == "" {
+			*issuer = defaults.Issuer
+		}
+		if !explicitFlags(visited, "profile") && strings.TrimSpace(*profile) == "" {
+			*profile = defaults.Profile
+		}
+		if !explicitFlags(visited, "oci-config-file") && strings.TrimSpace(*ociConfigPath) == "" {
+			*ociConfigPath = defaults.OCIConfigPath
+		}
+		if !explicitFlags(visited, "region") && strings.TrimSpace(*region) == "" {
+			*region = defaults.Region
+		}
 	}
 	plan, err := diagnose.Build(diagnose.Options{
 		Service:        diagnose.ServiceKind(*service),
@@ -292,6 +372,8 @@ func runDiagnose(args []string, stdout io.Writer) error {
 		CandidateAppID: *candidateAppID,
 		KnownGoodAppID: *knownGoodAppID,
 		Profile:        *profile,
+		OCIConfigPath:  *ociConfigPath,
+		Region:         *region,
 	})
 	if err != nil {
 		return err
@@ -476,6 +558,10 @@ Plan options:
   --principal-email-domain example.invalid
   --include user,service,jwt
     jwt expands to jwt-service,jwt-user,workload
+  --oci-context=true
+    read profile, region, config path, issuer, and scope defaults from current oci-context
+  --oci-context-service obp
+    token service name for issuer/scope defaults
   --format json|text
 `, program, program, program, program, program, program, program, program, program)
 }
@@ -483,6 +569,12 @@ Plan options:
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {
 	fmt.Fprintf(stdout, "schema: %s\n", plan.SchemaVersion)
 	fmt.Fprintf(stdout, "service: %s\n", plan.Target.Service)
+	if plan.Target.OCIContext != "" {
+		fmt.Fprintf(stdout, "ociContext: %s\n", plan.Target.OCIContext)
+	}
+	if plan.Target.OCIProfile != "" {
+		fmt.Fprintf(stdout, "ociProfile: %s\n", plan.Target.OCIProfile)
+	}
 	fmt.Fprintf(stdout, "issuer: %s\n", plan.Target.Issuer)
 	fmt.Fprintf(stdout, "scope: %s\n", plan.Target.Scope)
 	fmt.Fprintf(stdout, "idcsEndpoint: %s\n", plan.Target.IDCSEndpoint)
@@ -501,4 +593,30 @@ func writeTextPlan(stdout io.Writer, plan planner.Plan) {
 			fmt.Fprintf(stdout, "    post-create: %s\n", action.Command)
 		}
 	}
+}
+
+func collectVisitedFlags(flags *flag.FlagSet) map[string]bool {
+	visited := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+	return visited
+}
+
+func defaultOCIContextServiceName(service string) string {
+	switch strings.ToLower(strings.TrimSpace(service)) {
+	case string(planner.ServiceOBP):
+		return string(planner.ServiceOBP)
+	default:
+		return ""
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
