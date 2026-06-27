@@ -35,15 +35,20 @@ jobs:
         run: npm run test:npm
 
       - name: Publish to GitHub Packages
-        run: npm publish --registry https://npm.pkg.github.com
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "$name@$version" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "$name@$version already exists in GitHub Packages; skipping."
+            exit 0
+          fi
+          npm publish --registry https://npm.pkg.github.com
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   npmjs:
     name: Publish to npmjs
     runs-on: ubuntu-latest
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,10 +68,30 @@ jobs:
       - name: Test package
         run: npm run test:npm
 
-      - name: Publish to npmjs
+      - name: Check npmjs token
+        id: npm-token
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "NPM_TOKEN is not configured; skipping npmjs publish."
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to npmjs
+        if: steps.npm-token.outputs.configured == 'true'
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "$name@$version" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "$name@$version already exists on npmjs; skipping."
             exit 0
           fi
           npm publish --access public --registry https://registry.npmjs.org
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip npmjs publish
+        if: steps.npm-token.outputs.configured != 'true'
+        run: echo "NPM_TOKEN is not configured; skipping npmjs publish."
