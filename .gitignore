@@ -3,5 +3,8 @@
 /build/
 /coverage/
 /oci-identity-apps
+npm/bin/oci-identity-apps
+npm/bin/oci-identity-apps.exe
+*.tgz
 *.test
 *.out
