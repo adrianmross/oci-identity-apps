@@ -38,6 +38,13 @@ npm:
 npm install -g @adrianmross/oci-identity-apps
 ```
 
+GitHub Packages:
+
+```bash
+npm config set @adrianmross:registry https://npm.pkg.github.com
+npm install -g @adrianmross/oci-identity-apps
+```
+
 The npm package builds the Go CLI during install, so Go 1.25.6 or newer must be
 available on `PATH`.
 
