@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/adrianmross/oci-identity-apps/internal/diagnose"
 	"github.com/adrianmross/oci-identity-apps/internal/discovery"
 	"github.com/adrianmross/oci-identity-apps/internal/handoff"
 	"github.com/adrianmross/oci-identity-apps/internal/materialize"
@@ -49,6 +50,12 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 		return 0
 	case "discover":
 		if err := runDiscover(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "diagnose":
+		if err := runDiagnose(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -110,6 +117,8 @@ func runPlan(args []string, stdout io.Writer) error {
 	redirectURL := flags.String("redirect-url", planner.DefaultCLIRedirectURL, "loopback redirect URL for CLI auth-code flow")
 	include := flags.String("include", "user,service,jwt", "comma list of apps to plan: user,service,jwt,jwt-service,jwt-user,workload")
 	userClientType := flags.String("user-client-type", string(planner.ClientPublic), "user app client type: public or confidential")
+	principalMode := flags.String("principal-mode", string(planner.PrincipalAuto), "service principal mode: auto, none, or same-name-user")
+	principalEmailDomain := flags.String("principal-email-domain", "example.invalid", "email domain for generated same-name principal users")
 	rolePreset := flags.String("role-preset", "none", "comma list of service role presets: none,obp-admin,obp-rest-client,obp-user,obp-ca-user")
 	appRoleGrants := flags.String("app-role-grants", "", "comma list of target service app role grants as NAME=APP_ROLE_ID entries")
 	certificateAlias := flags.String("certificate-alias", "", "certificate alias for JWT client assertion apps; defaults to <app-name>-cert")
@@ -136,6 +145,10 @@ func runPlan(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	parsedPrincipalMode, err := planner.ParsePrincipalMode(*principalMode)
+	if err != nil {
+		return err
+	}
 	grants, err := planner.ParseAppRoleGrants(*appRoleGrants)
 	if err != nil {
 		return err
@@ -145,27 +158,29 @@ func runPlan(args []string, stdout io.Writer) error {
 		return err
 	}
 	plan, err := planner.Build(planner.Options{
-		Service:            planner.ServiceKind(*service),
-		Platform:           *platform,
-		Issuer:             *issuer,
-		Scope:              *scope,
-		IDCSEndpoint:       *idcsEndpoint,
-		ResourceAppID:      *resourceAppID,
-		BaseAppName:        *baseAppName,
-		BaseAppDisplayName: *baseAppDisplayName,
-		AppPrefix:          *appPrefix,
-		RedirectURL:        *redirectURL,
-		Include:            includes,
-		UserClientType:     clientType,
-		RolePresets:        presets,
-		AppRoleGrants:      grants,
-		CertificateAlias:   *certificateAlias,
-		TemplateID:         *templateID,
-		UserTemplateID:     *userTemplateID,
-		ServiceTemplateID:  *serviceTemplateID,
-		JWTTemplateID:      *jwtTemplateID,
-		AccessTokenExpiry:  *accessTokenExpiry,
-		RefreshTokenExpiry: *refreshTokenExpiry,
+		Service:              planner.ServiceKind(*service),
+		Platform:             *platform,
+		Issuer:               *issuer,
+		Scope:                *scope,
+		IDCSEndpoint:         *idcsEndpoint,
+		ResourceAppID:        *resourceAppID,
+		BaseAppName:          *baseAppName,
+		BaseAppDisplayName:   *baseAppDisplayName,
+		AppPrefix:            *appPrefix,
+		RedirectURL:          *redirectURL,
+		Include:              includes,
+		UserClientType:       clientType,
+		PrincipalMode:        parsedPrincipalMode,
+		PrincipalEmailDomain: *principalEmailDomain,
+		RolePresets:          presets,
+		AppRoleGrants:        grants,
+		CertificateAlias:     *certificateAlias,
+		TemplateID:           *templateID,
+		UserTemplateID:       *userTemplateID,
+		ServiceTemplateID:    *serviceTemplateID,
+		JWTTemplateID:        *jwtTemplateID,
+		AccessTokenExpiry:    *accessTokenExpiry,
+		RefreshTokenExpiry:   *refreshTokenExpiry,
 	})
 	if err != nil {
 		return err
@@ -245,6 +260,61 @@ func runDiscover(args []string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "idcsEndpoint: %s\n", plan.IDCSEndpoint)
 		for _, command := range plan.Commands {
 			fmt.Fprintf(stdout, "%s: %s\n  %s\n", command.Key, command.Description, command.Command)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q", *format)
+	}
+}
+
+func runDiagnose(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("diagnose", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	service := flags.String("service", string(diagnose.ServiceGeneric), "service preset: generic or obp")
+	issuer := flags.String("issuer", "", "OCI Identity Domains issuer URL")
+	idcsEndpoint := flags.String("idcs-endpoint", "", "OCI Identity Domains base endpoint")
+	resourceAppID := flags.String("resource-app-id", "", "target service/resource app id")
+	candidateAppID := flags.String("candidate-app-id", "", "candidate OAuth client app id")
+	knownGoodAppID := flags.String("known-good-app-id", "", "optional known-working OAuth client app id to compare")
+	profile := flags.String("profile", "", "optional OCI CLI profile to include in generated commands")
+	format := flags.String("format", "json", "output format: json or text")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	plan, err := diagnose.Build(diagnose.Options{
+		Service:        diagnose.ServiceKind(*service),
+		Issuer:         *issuer,
+		IDCSEndpoint:   *idcsEndpoint,
+		ResourceAppID:  *resourceAppID,
+		CandidateAppID: *candidateAppID,
+		KnownGoodAppID: *knownGoodAppID,
+		Profile:        *profile,
+	})
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(plan)
+	case "text":
+		fmt.Fprintf(stdout, "idcsEndpoint: %s\n", plan.IDCSEndpoint)
+		fmt.Fprintf(stdout, "resourceAppId: %s\n", plan.ResourceAppID)
+		if plan.CandidateAppID != "" {
+			fmt.Fprintf(stdout, "candidateAppId: %s\n", plan.CandidateAppID)
+		}
+		if plan.KnownGoodAppID != "" {
+			fmt.Fprintf(stdout, "knownGoodAppId: %s\n", plan.KnownGoodAppID)
+		}
+		for _, command := range plan.Commands {
+			fmt.Fprintf(stdout, "%s: %s\n  %s\n", command.Key, command.Description, command.Command)
+		}
+		for _, item := range plan.Interpretation {
+			fmt.Fprintf(stdout, "note: %s\n", item)
 		}
 		return nil
 	default:
@@ -387,6 +457,7 @@ func writeRootHelp(stdout io.Writer, program string) {
 Usage:
   %s plan [options]
   %s discover [options]
+  %s diagnose [options]
   %s materialize --plan plan.json --out ./idcs-artifacts
   %s handoff --plan plan.json --target oci-context --format yaml
   %s apply --plan plan.json --out ./idcs-artifacts
@@ -401,10 +472,12 @@ Plan options:
   --resource-app-id target-service-app-id
   --role-preset obp-admin
   --app-role-grants ADMIN=app-role-id,REST_CLIENT=app-role-id
+  --principal-mode auto|none|same-name-user
+  --principal-email-domain example.invalid
   --include user,service,jwt
     jwt expands to jwt-service,jwt-user,workload
   --format json|text
-`, program, program, program, program, program, program, program, program)
+`, program, program, program, program, program, program, program, program, program)
 }
 
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {

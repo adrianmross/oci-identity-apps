@@ -109,7 +109,7 @@ func applyScript(plan planner.Plan) string {
 	b.WriteString("#!/usr/bin/env bash\nset -euo pipefail\n\n")
 	b.WriteString("cd \"$(dirname \"$0\")\"\n\n")
 	b.WriteString("# Review every payload before running this script.\n")
-	b.WriteString("# Replace <created-app-id> placeholders in grant payloads after app creation.\n\n")
+	b.WriteString("# Replace <created-app-id> and <principal-user-id-for-...> placeholders after app/user creation.\n\n")
 	for _, command := range plan.Apply.PreCreateCommands {
 		b.WriteString(command + "\n")
 	}
@@ -167,8 +167,14 @@ func cleanupScript(plan planner.Plan) string {
 	b.WriteString("# Delete in reverse order. Replace placeholders with IDs returned by OCI Identity Domains.\n\n")
 	for i := len(plan.Apps) - 1; i >= 0; i-- {
 		app := plan.Apps[i]
-		for range app.OCIPostCreate {
-			b.WriteString("oci identity-domains grant delete --endpoint " + shellQuote(plan.Target.IDCSEndpoint) + " --grant-id <grant-id> --force\n")
+		for j := len(app.OCIPostCreate) - 1; j >= 0; j-- {
+			action := app.OCIPostCreate[j]
+			switch action.Key {
+			case "grant-app-role", "grant-principal-user-app-role":
+				b.WriteString("oci identity-domains grant delete --endpoint " + shellQuote(plan.Target.IDCSEndpoint) + " --grant-id <grant-id-for-" + action.PayloadFile + "> --force\n")
+			case "create-principal-user":
+				b.WriteString("oci identity-domains user delete --endpoint " + shellQuote(plan.Target.IDCSEndpoint) + " --user-id <principal-user-id-for-" + app.Name + "> --force\n")
+			}
 		}
 		b.WriteString("oci identity-domains app delete --endpoint " + shellQuote(plan.Target.IDCSEndpoint) + " --app-id <created-app-id-for-" + app.Name + "> --force\n")
 		for range app.OCIPreCreate {

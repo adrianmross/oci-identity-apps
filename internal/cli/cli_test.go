@@ -88,6 +88,39 @@ func TestDiscoverText(t *testing.T) {
 	}
 }
 
+func TestDiagnoseText(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"diagnose",
+		"--service", "obp",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--resource-app-id", "resource-app-id",
+		"--candidate-app-id", "candidate-app-id",
+		"--known-good-app-id", "known-good-app-id",
+		"--profile", "DEFAULT",
+		"--format", "text",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run failed with %d: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"get-resource-app",
+		"search-grants-for-candidate",
+		"search-grants-for-known-good",
+		"search-account-mgmt-for-resource-app",
+		"search-same-name-user-for-candidate",
+		"search-grants-for-candidate-user",
+		"--profile 'DEFAULT'",
+		"OBP_ADMIN_FORBIDDEN",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
 func TestMaterializeAndValidate(t *testing.T) {
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.json")
@@ -125,6 +158,8 @@ func TestMaterializeAndValidate(t *testing.T) {
 		"example-obp-service-jwt.json",
 		"example-obp-service-jwt-oauth-client-certificate.json",
 		"example-obp-service-jwt-grant-admin.json",
+		"example-obp-service-jwt-principal-user.json",
+		"example-obp-service-jwt-principal-user-grant-admin.json",
 		"apply.sh",
 		"validate.sh",
 		"cleanup.sh",

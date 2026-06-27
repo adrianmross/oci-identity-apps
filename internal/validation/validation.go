@@ -69,6 +69,9 @@ func FromPlan(plan planner.Plan) Report {
 		if app.Key == planner.AppJWTService && len(app.OCIPreCreate) == 0 {
 			add("jwt-certificate-"+app.Name, "warn", "warning", "jwt-service app has no OAuth client certificate registration action")
 		}
+		if app.Principal != nil && app.Principal.UserName != app.Name {
+			add("principal-"+app.Name, "warn", "warning", "principal user name should match OAuth client id for same-name-user mode")
+		}
 	}
 	report.Commands = validationCommands(plan)
 	return report
@@ -121,6 +124,28 @@ func validationCommands(plan planner.Plan) []Check {
 					" --client-secret '<client-secret>' --scope " + shellQuote(plan.Target.Scope) +
 					" --no-login --format raw >/dev/null",
 			})
+		}
+		if app.Principal != nil {
+			commands = append(commands,
+				Check{
+					Key:     "principal-user-" + app.Name,
+					Status:  "manual",
+					Message: "Confirm the same-name principal user exists.",
+					Command: "oci identity-domains users search --endpoint " + shellQuote(plan.Target.IDCSEndpoint) +
+						" --schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'" +
+						" --filter " + shellQuote("userName eq \""+app.Principal.UserName+"\"") +
+						" --attributes '[\"id\",\"userName\",\"displayName\",\"active\",\"roles\"]' --count 10",
+				},
+				Check{
+					Key:     "principal-user-grants-" + app.Name,
+					Status:  "manual",
+					Message: "Confirm the same-name principal user has target service app-role grants.",
+					Command: "oci identity-domains grants search --endpoint " + shellQuote(plan.Target.IDCSEndpoint) +
+						" --schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'" +
+						" --filter " + shellQuote("grantee.value eq \"<principal-user-id-for-"+app.Name+">\"") +
+						" --attributes '[\"id\",\"app\",\"entitlement\",\"grantee\",\"grantMechanism\",\"isFulfilled\"]' --count 100",
+				},
+			)
 		}
 	}
 	return commands

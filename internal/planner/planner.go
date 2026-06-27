@@ -9,64 +9,72 @@ import (
 )
 
 const (
-	SchemaVersion                            = "oci-idm.plan.v1"
-	IDCSAppSchema                            = "urn:ietf:params:scim:schemas:oracle:idcs:App"
-	DefaultWebAppTemplateID                  = "CustomWebAppTemplateId"
-	DefaultPublicAppTemplateID               = "CustomBrowserMobileTemplateId"
-	DefaultCLIRedirectURL                    = "http://127.0.0.1:8180/callback"
-	AuthorizationCodeGrant                   = "authorization_code"
-	RefreshTokenGrant                        = "refresh_token"
-	ClientCredentialsGrant                   = "client_credentials"
-	JWTBearerGrant                           = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-	TokenExchangeGrant                       = "urn:ietf:params:oauth:grant-type:token-exchange"
-	OAuthClientCertificateSchema             = "urn:ietf:params:scim:schemas:oracle:idcs:OAuthClientCertificate"
-	GrantSchema                              = "urn:ietf:params:scim:schemas:oracle:idcs:Grant"
-	PatchOpSchema                            = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
-	AdministratorToAppGrant                  = "ADMINISTRATOR_TO_APP"
-	ServiceGeneric               ServiceKind = "generic"
-	ServiceOBP                   ServiceKind = "obp"
-	AppUser                      AppKind     = "user"
-	AppService                   AppKind     = "service"
-	AppJWT                       AppKind     = "jwt"
-	AppJWTService                AppKind     = "jwt-service"
-	AppJWTUser                   AppKind     = "jwt-user"
-	AppWorkload                  AppKind     = "workload"
-	ClientPublic                 ClientType  = "public"
-	ClientConfidential           ClientType  = "confidential"
-	RolePresetNone               RolePreset  = "none"
-	RolePresetOBPAdmin           RolePreset  = "obp-admin"
-	RolePresetOBPRestClient      RolePreset  = "obp-rest-client"
-	RolePresetOBPUser            RolePreset  = "obp-user"
-	RolePresetOBPCAUser          RolePreset  = "obp-ca-user"
+	SchemaVersion                              = "oci-idm.plan.v1"
+	IDCSAppSchema                              = "urn:ietf:params:scim:schemas:oracle:idcs:App"
+	IDCSUserSchema                             = "urn:ietf:params:scim:schemas:core:2.0:User"
+	DefaultWebAppTemplateID                    = "CustomWebAppTemplateId"
+	DefaultPublicAppTemplateID                 = "CustomBrowserMobileTemplateId"
+	DefaultCLIRedirectURL                      = "http://127.0.0.1:8180/callback"
+	AuthorizationCodeGrant                     = "authorization_code"
+	RefreshTokenGrant                          = "refresh_token"
+	ClientCredentialsGrant                     = "client_credentials"
+	JWTBearerGrant                             = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+	TokenExchangeGrant                         = "urn:ietf:params:oauth:grant-type:token-exchange"
+	OAuthClientCertificateSchema               = "urn:ietf:params:scim:schemas:oracle:idcs:OAuthClientCertificate"
+	GrantSchema                                = "urn:ietf:params:scim:schemas:oracle:idcs:Grant"
+	PatchOpSchema                              = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+	AdministratorToAppGrant                    = "ADMINISTRATOR_TO_APP"
+	AdministratorToUserGrant                   = "ADMINISTRATOR_TO_USER"
+	ServiceGeneric               ServiceKind   = "generic"
+	ServiceOBP                   ServiceKind   = "obp"
+	AppUser                      AppKind       = "user"
+	AppService                   AppKind       = "service"
+	AppJWT                       AppKind       = "jwt"
+	AppJWTService                AppKind       = "jwt-service"
+	AppJWTUser                   AppKind       = "jwt-user"
+	AppWorkload                  AppKind       = "workload"
+	ClientPublic                 ClientType    = "public"
+	ClientConfidential           ClientType    = "confidential"
+	PrincipalAuto                PrincipalMode = "auto"
+	PrincipalNone                PrincipalMode = "none"
+	PrincipalSameNameUser        PrincipalMode = "same-name-user"
+	RolePresetNone               RolePreset    = "none"
+	RolePresetOBPAdmin           RolePreset    = "obp-admin"
+	RolePresetOBPRestClient      RolePreset    = "obp-rest-client"
+	RolePresetOBPUser            RolePreset    = "obp-user"
+	RolePresetOBPCAUser          RolePreset    = "obp-ca-user"
 )
 
 type ServiceKind string
 type AppKind string
 type ClientType string
+type PrincipalMode string
 type RolePreset string
 
 type Options struct {
-	Service            ServiceKind
-	Platform           string
-	Issuer             string
-	Scope              string
-	IDCSEndpoint       string
-	ResourceAppID      string
-	BaseAppName        string
-	BaseAppDisplayName string
-	AppPrefix          string
-	RedirectURL        string
-	Include            []AppKind
-	UserClientType     ClientType
-	RolePresets        []RolePreset
-	AppRoleGrants      []AppRoleGrant
-	CertificateAlias   string
-	TemplateID         string
-	UserTemplateID     string
-	ServiceTemplateID  string
-	JWTTemplateID      string
-	AccessTokenExpiry  int
-	RefreshTokenExpiry int
+	Service              ServiceKind
+	Platform             string
+	Issuer               string
+	Scope                string
+	IDCSEndpoint         string
+	ResourceAppID        string
+	BaseAppName          string
+	BaseAppDisplayName   string
+	AppPrefix            string
+	RedirectURL          string
+	Include              []AppKind
+	UserClientType       ClientType
+	PrincipalMode        PrincipalMode
+	PrincipalEmailDomain string
+	RolePresets          []RolePreset
+	AppRoleGrants        []AppRoleGrant
+	CertificateAlias     string
+	TemplateID           string
+	UserTemplateID       string
+	ServiceTemplateID    string
+	JWTTemplateID        string
+	AccessTokenExpiry    int
+	RefreshTokenExpiry   int
 }
 
 type Plan struct {
@@ -80,17 +88,19 @@ type Plan struct {
 }
 
 type Target struct {
-	Service            ServiceKind        `json:"service"`
-	Platform           string             `json:"platform,omitempty"`
-	Issuer             string             `json:"issuer"`
-	Scope              string             `json:"scope"`
-	IDCSEndpoint       string             `json:"idcsEndpoint"`
-	IDCSAdminURL       string             `json:"idcsAdminUrl"`
-	IDCSEndpointSource string             `json:"idcsEndpointSource"`
-	ResourceAppID      string             `json:"resourceAppId,omitempty"`
-	RedirectURL        string             `json:"redirectUrl"`
-	UserClientType     ClientType         `json:"userClientType"`
-	TemplateIDs        map[AppKind]string `json:"templateIds"`
+	Service              ServiceKind        `json:"service"`
+	Platform             string             `json:"platform,omitempty"`
+	Issuer               string             `json:"issuer"`
+	Scope                string             `json:"scope"`
+	IDCSEndpoint         string             `json:"idcsEndpoint"`
+	IDCSAdminURL         string             `json:"idcsAdminUrl"`
+	IDCSEndpointSource   string             `json:"idcsEndpointSource"`
+	ResourceAppID        string             `json:"resourceAppId,omitempty"`
+	RedirectURL          string             `json:"redirectUrl"`
+	UserClientType       ClientType         `json:"userClientType"`
+	PrincipalMode        PrincipalMode      `json:"principalMode"`
+	PrincipalEmailDomain string             `json:"principalEmailDomain,omitempty"`
+	TemplateIDs          map[AppKind]string `json:"templateIds"`
 }
 
 type BaseCloudServiceApp struct {
@@ -112,9 +122,20 @@ type AppPlan struct {
 	OCICreatePayloadFile string         `json:"ociCreatePayloadFile"`
 	OCICreateCommand     string         `json:"ociCreateCommand"`
 	OCICreatePayload     AppCreateInput `json:"ociCreatePayload"`
+	Principal            *PrincipalPlan `json:"principal,omitempty"`
 	OCIPostCreate        []OCIAction    `json:"ociPostCreate,omitempty"`
 	RequiredPostCreate   []string       `json:"requiredPostCreate"`
 	Usage                []string       `json:"usage"`
+}
+
+type PrincipalPlan struct {
+	Mode           PrincipalMode   `json:"mode"`
+	UserName       string          `json:"userName"`
+	DisplayName    string          `json:"displayName"`
+	PayloadFile    string          `json:"payloadFile"`
+	CreateCommand  string          `json:"createCommand"`
+	CreatePayload  UserCreateInput `json:"createPayload"`
+	RequiredReason string          `json:"requiredReason"`
 }
 
 type ApplyPlan struct {
@@ -145,6 +166,29 @@ type AppCreateInput struct {
 	AllowOffline       *bool          `json:"allowOffline,omitempty"`
 	AccessTokenExpiry  *int           `json:"accessTokenExpiry,omitempty"`
 	RefreshTokenExpiry *int           `json:"refreshTokenExpiry,omitempty"`
+}
+
+type UserCreateInput struct {
+	Schemas     []string `json:"schemas"`
+	UserName    string   `json:"userName"`
+	DisplayName string   `json:"displayName,omitempty"`
+	Name        Name     `json:"name"`
+	Emails      []Email  `json:"emails,omitempty"`
+	Active      bool     `json:"active"`
+	Description string   `json:"description,omitempty"`
+	ExternalID  string   `json:"externalId,omitempty"`
+}
+
+type Name struct {
+	GivenName  string `json:"givenName,omitempty"`
+	FamilyName string `json:"familyName,omitempty"`
+	Formatted  string `json:"formatted,omitempty"`
+}
+
+type Email struct {
+	Value   string `json:"value"`
+	Type    string `json:"type,omitempty"`
+	Primary bool   `json:"primary,omitempty"`
 }
 
 type TemplateRef struct {
@@ -233,6 +277,10 @@ func Build(options Options) (Plan, error) {
 	if userClientType != ClientPublic && userClientType != ClientConfidential {
 		return Plan{}, fmt.Errorf("unsupported user client type %q", userClientType)
 	}
+	principalMode, err := resolvePrincipalMode(options.PrincipalMode, service)
+	if err != nil {
+		return Plan{}, err
+	}
 
 	idcsEndpoint, err := normalizeEndpoint(firstNonEmpty(options.IDCSEndpoint, issuer))
 	if err != nil {
@@ -251,20 +299,22 @@ func Build(options Options) (Plan, error) {
 	))
 
 	ctx := buildContext{
-		service:            service,
-		prefix:             prefix,
-		issuer:             issuer,
-		scope:              scope,
-		platform:           strings.TrimSpace(options.Platform),
-		redirectURL:        redirectURL,
-		idcsEndpoint:       idcsEndpoint,
-		resourceAppID:      strings.TrimSpace(options.ResourceAppID),
-		templateIDs:        templateIDs,
-		userClientType:     userClientType,
-		appRoleGrants:      resolveAppRoleGrants(options.RolePresets, options.AppRoleGrants),
-		certificateAlias:   strings.TrimSpace(options.CertificateAlias),
-		accessTokenExpiry:  positivePtr(options.AccessTokenExpiry),
-		refreshTokenExpiry: positivePtr(options.RefreshTokenExpiry),
+		service:              service,
+		prefix:               prefix,
+		issuer:               issuer,
+		scope:                scope,
+		platform:             strings.TrimSpace(options.Platform),
+		redirectURL:          redirectURL,
+		idcsEndpoint:         idcsEndpoint,
+		resourceAppID:        strings.TrimSpace(options.ResourceAppID),
+		templateIDs:          templateIDs,
+		userClientType:       userClientType,
+		principalMode:        principalMode,
+		principalEmailDomain: normalizeEmailDomain(options.PrincipalEmailDomain),
+		appRoleGrants:        resolveAppRoleGrants(options.RolePresets, options.AppRoleGrants),
+		certificateAlias:     strings.TrimSpace(options.CertificateAlias),
+		accessTokenExpiry:    positivePtr(options.AccessTokenExpiry),
+		refreshTokenExpiry:   positivePtr(options.RefreshTokenExpiry),
 	}
 
 	apps := make([]AppPlan, 0, len(includes))
@@ -285,20 +335,35 @@ func Build(options Options) (Plan, error) {
 		}
 	}
 
+	sourceReferences := []string{
+		"OCI CLI: oci identity-domains app create",
+		"OCI CLI: oci identity-domains user create",
+		"OCI CLI: oci identity-domains o-auth-client-certificate create",
+		"OCI CLI: oci identity-domains grant create",
+		"Oracle Identity Domains: OAuth client applications and allowed grants",
+		"Oracle Identity Domains: SCIM User resource",
+		"Oracle Identity Domains: SCIM App resource",
+	}
+	if service == ServiceOBP {
+		sourceReferences = append(sourceReferences, "Oracle Blockchain Platform REST API: OAuth authentication")
+	}
+
 	return Plan{
 		SchemaVersion: SchemaVersion,
 		Target: Target{
-			Service:            service,
-			Platform:           strings.TrimSpace(options.Platform),
-			Issuer:             issuer,
-			Scope:              scope,
-			IDCSEndpoint:       idcsEndpoint,
-			IDCSAdminURL:       idcsEndpoint + "/admin/v1/",
-			IDCSEndpointSource: endpointSource(options.IDCSEndpoint),
-			ResourceAppID:      strings.TrimSpace(options.ResourceAppID),
-			RedirectURL:        redirectURL,
-			UserClientType:     userClientType,
-			TemplateIDs:        templateIDs,
+			Service:              service,
+			Platform:             strings.TrimSpace(options.Platform),
+			Issuer:               issuer,
+			Scope:                scope,
+			IDCSEndpoint:         idcsEndpoint,
+			IDCSAdminURL:         idcsEndpoint + "/admin/v1/",
+			IDCSEndpointSource:   endpointSource(options.IDCSEndpoint),
+			ResourceAppID:        strings.TrimSpace(options.ResourceAppID),
+			RedirectURL:          redirectURL,
+			UserClientType:       userClientType,
+			PrincipalMode:        principalMode,
+			PrincipalEmailDomain: normalizeEmailDomain(options.PrincipalEmailDomain),
+			TemplateIDs:          templateIDs,
 		},
 		BaseCloudServiceApp: baseCloudServiceApp(service, options),
 		Apps:                apps,
@@ -307,14 +372,8 @@ func Build(options Options) (Plan, error) {
 			Commands:           commands,
 			PostCreateCommands: postCreateCommands,
 		},
-		Validation: validationPlan(service),
-		SourceReferences: []string{
-			"OCI CLI: oci identity-domains app create",
-			"OCI CLI: oci identity-domains o-auth-client-certificate create",
-			"OCI CLI: oci identity-domains grant create",
-			"Oracle Identity Domains: OAuth client applications and allowed grants",
-			"Oracle Identity Domains: SCIM App resource",
-		},
+		Validation:       validationPlan(service, principalMode),
+		SourceReferences: sourceReferences,
 	}, nil
 }
 
@@ -352,6 +411,35 @@ func ParseClientType(value string) (ClientType, error) {
 	default:
 		return "", fmt.Errorf("unsupported client type %q", value)
 	}
+}
+
+func ParsePrincipalMode(value string) (PrincipalMode, error) {
+	switch strings.TrimSpace(value) {
+	case "":
+		return "", nil
+	case string(PrincipalAuto):
+		return PrincipalAuto, nil
+	case string(PrincipalNone):
+		return PrincipalNone, nil
+	case string(PrincipalSameNameUser):
+		return PrincipalSameNameUser, nil
+	default:
+		return "", fmt.Errorf("unsupported principal mode %q", value)
+	}
+}
+
+func resolvePrincipalMode(value PrincipalMode, service ServiceKind) (PrincipalMode, error) {
+	parsed, err := ParsePrincipalMode(string(value))
+	if err != nil {
+		return "", err
+	}
+	if parsed == "" || parsed == PrincipalAuto {
+		if service == ServiceOBP {
+			return PrincipalSameNameUser, nil
+		}
+		return PrincipalNone, nil
+	}
+	return parsed, nil
 }
 
 func ParseRolePresets(value string) ([]RolePreset, error) {
@@ -477,20 +565,22 @@ func rolePresetGrants(preset RolePreset) []AppRoleGrant {
 }
 
 type buildContext struct {
-	service            ServiceKind
-	prefix             string
-	issuer             string
-	scope              string
-	platform           string
-	redirectURL        string
-	idcsEndpoint       string
-	resourceAppID      string
-	templateIDs        map[AppKind]string
-	userClientType     ClientType
-	appRoleGrants      []AppRoleGrant
-	certificateAlias   string
-	accessTokenExpiry  *int
-	refreshTokenExpiry *int
+	service              ServiceKind
+	prefix               string
+	issuer               string
+	scope                string
+	platform             string
+	redirectURL          string
+	idcsEndpoint         string
+	resourceAppID        string
+	templateIDs          map[AppKind]string
+	userClientType       ClientType
+	principalMode        PrincipalMode
+	principalEmailDomain string
+	appRoleGrants        []AppRoleGrant
+	certificateAlias     string
+	accessTokenExpiry    *int
+	refreshTokenExpiry   *int
 }
 
 func buildApp(kind AppKind, ctx buildContext) AppPlan {
@@ -520,19 +610,21 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 		})
 	case AppService:
 		return appPlan(appInput{
-			kind:          AppService,
-			name:          ctx.prefix + "-service",
-			displayName:   title(ctx.prefix) + " Service Client",
-			purpose:       "Confidential OAuth client for non-human client-credentials automation.",
-			clientType:    ClientConfidential,
-			grants:        []string{ClientCredentialsGrant},
-			scope:         ctx.scope,
-			resourceAppID: ctx.resourceAppID,
-			templateID:    ctx.templateIDs[AppService],
-			idcsEndpoint:  ctx.idcsEndpoint,
-			bypassConsent: true,
-			accessExpiry:  ctx.accessTokenExpiry,
-			appRoleGrants: ctx.appRoleGrants,
+			kind:                 AppService,
+			name:                 ctx.prefix + "-service",
+			displayName:          title(ctx.prefix) + " Service Client",
+			purpose:              "Confidential OAuth client for non-human client-credentials automation.",
+			clientType:           ClientConfidential,
+			grants:               []string{ClientCredentialsGrant},
+			scope:                ctx.scope,
+			resourceAppID:        ctx.resourceAppID,
+			templateID:           ctx.templateIDs[AppService],
+			idcsEndpoint:         ctx.idcsEndpoint,
+			bypassConsent:        true,
+			accessExpiry:         ctx.accessTokenExpiry,
+			appRoleGrants:        ctx.appRoleGrants,
+			principalMode:        ctx.principalMode,
+			principalEmailDomain: ctx.principalEmailDomain,
 			requiredPostCreate: []string{
 				"Store the generated client id and secret in a secret manager or CI secret store.",
 				"Grant only the target service roles required by this automation identity.",
@@ -543,21 +635,23 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 		})
 	case AppJWTService:
 		return appPlan(appInput{
-			kind:          AppJWTService,
-			name:          ctx.prefix + "-service-jwt",
-			displayName:   title(ctx.prefix) + " Service JWT Client",
-			purpose:       "Confidential OAuth client for service-account client credentials with JWT client assertion authentication.",
-			clientType:    ClientConfidential,
-			grants:        []string{ClientCredentialsGrant},
-			scope:         ctx.scope,
-			resourceAppID: ctx.resourceAppID,
-			templateID:    ctx.templateIDs[AppJWTService],
-			idcsEndpoint:  ctx.idcsEndpoint,
-			bypassConsent: true,
-			accessExpiry:  ctx.accessTokenExpiry,
-			certAlias:     ctx.certificateAlias,
-			clientCert:    true,
-			appRoleGrants: ctx.appRoleGrants,
+			kind:                 AppJWTService,
+			name:                 ctx.prefix + "-service-jwt",
+			displayName:          title(ctx.prefix) + " Service JWT Client",
+			purpose:              "Confidential OAuth client for service-account client credentials with JWT client assertion authentication.",
+			clientType:           ClientConfidential,
+			grants:               []string{ClientCredentialsGrant},
+			scope:                ctx.scope,
+			resourceAppID:        ctx.resourceAppID,
+			templateID:           ctx.templateIDs[AppJWTService],
+			idcsEndpoint:         ctx.idcsEndpoint,
+			bypassConsent:        true,
+			accessExpiry:         ctx.accessTokenExpiry,
+			certAlias:            ctx.certificateAlias,
+			clientCert:           true,
+			appRoleGrants:        ctx.appRoleGrants,
+			principalMode:        ctx.principalMode,
+			principalEmailDomain: ctx.principalEmailDomain,
 			requiredPostCreate: []string{
 				"Register the client assertion signing certificate or public key trusted by the identity domain.",
 				"Grant only the target service roles required by this automation identity.",
@@ -622,26 +716,28 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 }
 
 type appInput struct {
-	kind               AppKind
-	name               string
-	displayName        string
-	purpose            string
-	clientType         ClientType
-	grants             []string
-	redirectURIs       []string
-	scope              string
-	resourceAppID      string
-	templateID         string
-	idcsEndpoint       string
-	allowOffline       bool
-	bypassConsent      bool
-	certAlias          string
-	clientCert         bool
-	appRoleGrants      []AppRoleGrant
-	accessExpiry       *int
-	refreshExpiry      *int
-	requiredPostCreate []string
-	usage              []string
+	kind                 AppKind
+	name                 string
+	displayName          string
+	purpose              string
+	clientType           ClientType
+	grants               []string
+	redirectURIs         []string
+	scope                string
+	resourceAppID        string
+	templateID           string
+	idcsEndpoint         string
+	allowOffline         bool
+	bypassConsent        bool
+	certAlias            string
+	clientCert           bool
+	appRoleGrants        []AppRoleGrant
+	principalMode        PrincipalMode
+	principalEmailDomain string
+	accessExpiry         *int
+	refreshExpiry        *int
+	requiredPostCreate   []string
+	usage                []string
 }
 
 func appPlan(input appInput) AppPlan {
@@ -681,6 +777,17 @@ func appPlan(input appInput) AppPlan {
 			postCreate = append(postCreate, appRoleGrantAction(input, grant))
 		}
 	}
+	principal := principalPlan(input)
+	if principal != nil {
+		postCreate = append(postCreate, principalUserCreateAction(input, *principal))
+		for _, grant := range input.appRoleGrants {
+			postCreate = append(postCreate, principalUserRoleGrantAction(input, *principal, grant))
+		}
+		input.requiredPostCreate = append(input.requiredPostCreate,
+			"Create or reuse the same-name principal user "+input.name+" before validating target-service authorization.",
+			"Replace <principal-user-id-for-"+input.name+"> in user-role grant payloads with the created or existing user id.",
+		)
+	}
 
 	return AppPlan{
 		Key:                  input.kind,
@@ -695,6 +802,7 @@ func appPlan(input appInput) AppPlan {
 		OCICreatePayloadFile: payloadFile,
 		OCICreateCommand:     "oci identity-domains app create --endpoint " + shellQuote(input.idcsEndpoint) + " --from-json file://" + payloadFile,
 		OCICreatePayload:     payload,
+		Principal:            principal,
 		OCIPostCreate:        postCreate,
 		RequiredPostCreate:   append([]string{}, input.requiredPostCreate...),
 		Usage:                append([]string{}, input.usage...),
@@ -748,6 +856,87 @@ func appRoleGrantAction(input appInput, grant AppRoleGrant) OCIAction {
 	}
 }
 
+func principalPlan(input appInput) *PrincipalPlan {
+	if input.principalMode != PrincipalSameNameUser {
+		return nil
+	}
+	if input.kind != AppService && input.kind != AppJWTService {
+		return nil
+	}
+	userName := input.name
+	displayName := input.displayName + " Principal"
+	payloadFile := input.name + "-principal-user.json"
+	emailDomain := normalizeEmailDomain(input.principalEmailDomain)
+	email := userName + "@" + emailDomain
+	return &PrincipalPlan{
+		Mode:          PrincipalSameNameUser,
+		UserName:      userName,
+		DisplayName:   displayName,
+		PayloadFile:   payloadFile,
+		CreateCommand: "oci identity-domains user create --endpoint " + shellQuote(input.idcsEndpoint) + " --from-json file://" + payloadFile,
+		CreatePayload: UserCreateInput{
+			Schemas:     []string{IDCSUserSchema},
+			UserName:    userName,
+			DisplayName: displayName,
+			Name: Name{
+				GivenName:  title(input.name),
+				FamilyName: "Principal",
+				Formatted:  displayName,
+			},
+			Emails: []Email{{
+				Value:   email,
+				Type:    "work",
+				Primary: true,
+			}},
+			Active:      true,
+			Description: "Service principal user for OAuth client " + input.name + ". Some target services authorize client-credentials tokens by resolving token sub/client_id as an Identity Domains userName.",
+			ExternalID:  "oci-idm:" + input.name,
+		},
+		RequiredReason: "Target service authorizes the OAuth token subject as an Identity Domains user name.",
+	}
+}
+
+func principalUserCreateAction(input appInput, principal PrincipalPlan) OCIAction {
+	return OCIAction{
+		Key:         "create-principal-user",
+		Description: "Create same-name Identity Domains user " + principal.UserName + " for target-service authorization.",
+		PayloadFile: principal.PayloadFile,
+		Command:     principal.CreateCommand,
+		Payload:     principal.CreatePayload,
+	}
+}
+
+func principalUserRoleGrantAction(input appInput, principal PrincipalPlan, grant AppRoleGrant) OCIAction {
+	roleLabel := firstNonEmpty(grant.DisplayName, grant.ID)
+	payloadFile := input.name + "-principal-user-grant-" + normalizePrefix(roleLabel) + ".json"
+	principalUserID := "<principal-user-id-for-" + input.name + ">"
+	appRefBase := adminResourceBase(input.idcsEndpoint)
+	return OCIAction{
+		Key:         "grant-principal-user-app-role",
+		Description: "Grant target service app role " + roleLabel + " to same-name principal user " + principal.UserName + ".",
+		PayloadFile: payloadFile,
+		Command: "oci identity-domains grant create --endpoint " + shellQuote(input.idcsEndpoint) +
+			" --from-json file://" + payloadFile,
+		Payload: GrantInput{
+			Schemas:        []string{GrantSchema},
+			GrantMechanism: AdministratorToUserGrant,
+			App: ResourceRef{
+				Value: input.resourceAppID,
+				Ref:   appRefBase + "/Apps/" + input.resourceAppID,
+			},
+			Entitlement: EntitlementRef{
+				AttributeName:  "appRoles",
+				AttributeValue: grant.ID,
+			},
+			Grantee: ResourceRef{
+				Value: principalUserID,
+				Type:  "User",
+				Ref:   appRefBase + "/Users/" + principalUserID,
+			},
+		},
+	}
+}
+
 func userPostCreate(ctx buildContext) []string {
 	steps := []string{
 		"Copy the generated client id into your token helper configuration.",
@@ -776,7 +965,7 @@ func baseCloudServiceApp(service ServiceKind, options Options) BaseCloudServiceA
 	}
 }
 
-func validationPlan(service ServiceKind) ValidationPlan {
+func validationPlan(service ServiceKind, principalMode PrincipalMode) ValidationPlan {
 	before := []string{
 		"Confirm the OCI Identity Domains endpoint is the identity-domain base URL.",
 		"Confirm the requested scope belongs to the target service resource.",
@@ -791,6 +980,12 @@ func validationPlan(service ServiceKind) ValidationPlan {
 		after = append(after,
 			"Grant Oracle Blockchain Platform administrator access for deploy or console-admin APIs.",
 			"Grant REST_CLIENT and REST proxy enrollment for REST proxy chaincode calls.",
+		)
+	}
+	if principalMode == PrincipalSameNameUser {
+		after = append(after,
+			"Confirm the OAuth client id and principal userName are identical.",
+			"Confirm the principal user has the required target service app-role grants.",
 		)
 	}
 	return ValidationPlan{BeforeApply: before, AfterApply: after}
@@ -953,4 +1148,13 @@ func positivePtr(value int) *int {
 		return nil
 	}
 	return &value
+}
+
+func normalizeEmailDomain(value string) string {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.TrimPrefix(trimmed, "@")
+	if trimmed == "" {
+		return "example.invalid"
+	}
+	return trimmed
 }
