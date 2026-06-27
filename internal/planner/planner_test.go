@@ -46,6 +46,9 @@ func TestBuildGenericPlan(t *testing.T) {
 	if user.OCICreatePayload.AllowedGrants[0] != AuthorizationCodeGrant {
 		t.Fatalf("unexpected user grant: %v", user.OCICreatePayload.AllowedGrants)
 	}
+	if user.OCICreatePayload.AllURLSchemes == nil || !*user.OCICreatePayload.AllURLSchemes {
+		t.Fatal("expected user app payload to allow the loopback http redirect scheme")
+	}
 }
 
 func TestBuildOBPPlanDefaultsScopeToPlatform(t *testing.T) {
