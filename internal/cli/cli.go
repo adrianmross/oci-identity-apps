@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/adrianmross/oci-identity-apps/internal/discovery"
+	"github.com/adrianmross/oci-identity-apps/internal/handoff"
 	"github.com/adrianmross/oci-identity-apps/internal/materialize"
 	"github.com/adrianmross/oci-identity-apps/internal/planner"
 	"github.com/adrianmross/oci-identity-apps/internal/validation"
@@ -20,14 +22,21 @@ var (
 )
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
+	return RunWithName("oci-idm", args, stdout, stderr)
+}
+
+func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writer) int {
+	if strings.TrimSpace(program) == "" {
+		program = "oci-idm"
+	}
 	if len(args) == 0 {
-		writeRootHelp(stdout)
+		writeRootHelp(stdout, program)
 		return 0
 	}
 
 	switch args[0] {
 	case "help", "-h", "--help":
-		writeRootHelp(stdout)
+		writeRootHelp(stdout, program)
 		return 0
 	case "version", "-v", "--version":
 		fmt.Fprintln(stdout, versionString())
@@ -58,6 +67,12 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	case "validate":
 		if err := runValidate(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "handoff":
+		if err := runHandoff(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -312,16 +327,71 @@ func runValidate(args []string, stdout io.Writer) error {
 	}
 }
 
-func writeRootHelp(stdout io.Writer) {
-	fmt.Fprint(stdout, `oci-identity-apps plans OCI Identity Domains OAuth applications.
+func runHandoff(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("handoff", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-idm plan")
+	target := flags.String("target", "oci-context", "handoff target: oci-context")
+	format := flags.String("format", "json", "output format for --target oci-context: json, yaml, or commands")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	if strings.TrimSpace(*planPath) == "" {
+		return fmt.Errorf("--plan is required")
+	}
+	if strings.ToLower(strings.TrimSpace(*target)) != "oci-context" {
+		return fmt.Errorf("unsupported handoff target %q", *target)
+	}
+	plan, err := readPlanFile(*planPath)
+	if err != nil {
+		return err
+	}
+	ociContext := handoff.ForOCIContext(plan)
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "json":
+		data, err := handoff.JSON(ociContext)
+		if err != nil {
+			return err
+		}
+		_, err = stdout.Write(data)
+		return err
+	case "yaml", "yml":
+		fmt.Fprint(stdout, handoff.TokenServicesYAML(ociContext))
+		return nil
+	case "commands", "sh", "shell":
+		fmt.Fprint(stdout, handoff.TokenCommandsScript(ociContext))
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q", *format)
+	}
+}
+
+func readPlanFile(path string) (planner.Plan, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return planner.Plan{}, err
+	}
+	var plan planner.Plan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return planner.Plan{}, err
+	}
+	return plan, nil
+}
+
+func writeRootHelp(stdout io.Writer, program string) {
+	fmt.Fprintf(stdout, `%s plans OCI Identity Domains apps, grants, and token-helper handoffs.
 
 Usage:
-  oci-identity-apps plan [options]
-  oci-identity-apps discover [options]
-  oci-identity-apps materialize --plan plan.json --out ./idcs-artifacts
-  oci-identity-apps apply --plan plan.json --out ./idcs-artifacts
-  oci-identity-apps validate --plan plan.json
-  oci-identity-apps version
+  %s plan [options]
+  %s discover [options]
+  %s materialize --plan plan.json --out ./idcs-artifacts
+  %s handoff --plan plan.json --target oci-context --format yaml
+  %s apply --plan plan.json --out ./idcs-artifacts
+  %s validate --plan plan.json
+  %s version
 
 Plan options:
   --service generic|obp
@@ -334,7 +404,7 @@ Plan options:
   --include user,service,jwt
     jwt expands to jwt-service,jwt-user,workload
   --format json|text
-`)
+`, program, program, program, program, program, program, program, program)
 }
 
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {

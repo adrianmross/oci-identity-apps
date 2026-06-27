@@ -1,7 +1,7 @@
 {
-  "name": "@adrianmross/oci-identity-apps",
-  "version": "0.2.0",
-  "description": "Plan OCI Identity Domains OAuth applications for CLI and automation flows",
+  "name": "@adrianmross/oci-idm",
+  "version": "0.3.0",
+  "description": "Plan OCI Identity Domains apps, grants, and token-helper handoffs",
   "license": "MIT",
   "homepage": "https://github.com/adrianmross/oci-identity-apps#readme",
   "repository": {
@@ -13,6 +13,7 @@
   },
   "type": "commonjs",
   "bin": {
+    "oci-idm": "npm/bin/oci-idm.js",
     "oci-identity-apps": "npm/bin/oci-identity-apps.js"
   },
   "files": [
@@ -21,6 +22,7 @@
     "go.mod",
     "LICENSE",
     "README.md",
+    "npm/bin/oci-idm.js",
     "npm/bin/oci-identity-apps.js",
     "npm/scripts/build.js"
   ],

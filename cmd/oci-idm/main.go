@@ -7,5 +7,5 @@ import (
 )
 
 func main() {
-	os.Exit(cli.RunWithName("oci-identity-apps", os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(cli.RunWithName("oci-idm", os.Args[1:], os.Stdout, os.Stderr))
 }

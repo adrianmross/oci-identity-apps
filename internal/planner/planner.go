@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	SchemaVersion                            = "oci-identity-apps.plan.v1"
+	SchemaVersion                            = "oci-idm.plan.v1"
 	IDCSAppSchema                            = "urn:ietf:params:scim:schemas:oracle:idcs:App"
 	DefaultWebAppTemplateID                  = "CustomWebAppTemplateId"
 	DefaultPublicAppTemplateID               = "CustomBrowserMobileTemplateId"

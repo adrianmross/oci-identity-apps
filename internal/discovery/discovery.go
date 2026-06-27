@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = "oci-identity-apps.discovery.v1"
+const SchemaVersion = "oci-idm.discovery.v1"
 
 type Options struct {
 	Issuer       string

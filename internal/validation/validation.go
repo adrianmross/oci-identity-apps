@@ -8,7 +8,7 @@ import (
 	"github.com/adrianmross/oci-identity-apps/internal/planner"
 )
 
-const SchemaVersion = "oci-identity-apps.validation.v1"
+const SchemaVersion = "oci-idm.validation.v1"
 
 type Report struct {
 	SchemaVersion string  `json:"schemaVersion"`
