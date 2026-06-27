@@ -55,11 +55,40 @@ available on `PATH`.
 
 ## Basic Flow
 
+By default, `oci-idm` reads the current `oci-context` for OCI CLI defaults:
+
+- `oci-context export -f json` supplies the current context name, profile, and
+  region.
+- `oci-context paths -o json` supplies the OCI config file path.
+- `oci-context auth service list -o json` supplies OAuth issuer and scope
+  defaults when a matching token service exists, such as `obp`.
+
+Explicit flags always win. Use `--oci-context=false` to disable this defaulting,
+`--oci-context-bin` when testing another binary, and `--oci-context-service`
+when a generic service should read issuer/scope from a named token service.
+
+For OBP after selecting your OCI context and importing an `oci-context` token
+service, the shortest planning command is:
+
+```bash
+oci-context use oabcs1
+
+oci-idm plan \
+  --service obp \
+  --resource-app-id example-resource-app-id \
+  --base-app-name example-obp_APPID \
+  --include user,jwt-service \
+  --role-preset obp-admin \
+  --app-role-grants ADMIN=example-admin-role-id,REST_CLIENT=example-rest-client-role-id \
+  --principal-mode auto \
+  --principal-email-domain example.invalid \
+  --format json > idm-plan.json
+```
+
 Discover the service-created resource app:
 
 ```bash
 oci-idm discover \
-  --issuer https://idcs-example.identity.oraclecloud.com \
   --query example-oabcs \
   --format text
 ```
@@ -68,7 +97,6 @@ Inspect the resource app once you know its id:
 
 ```bash
 oci-idm discover \
-  --issuer https://idcs-example.identity.oraclecloud.com \
   --app-id example-resource-app-id \
   --format text
 ```
@@ -78,11 +106,9 @@ Diagnose a generated client app against a known-good app:
 ```bash
 oci-idm diagnose \
   --service obp \
-  --issuer https://idcs-example.identity.oraclecloud.com \
   --resource-app-id example-resource-app-id \
   --candidate-app-id generated-client-app-id \
   --known-good-app-id known-working-client-app-id \
-  --profile DEFAULT \
   --format text
 ```
 

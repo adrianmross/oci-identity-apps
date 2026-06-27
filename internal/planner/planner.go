@@ -75,6 +75,10 @@ type Options struct {
 	JWTTemplateID        string
 	AccessTokenExpiry    int
 	RefreshTokenExpiry   int
+	OCIContext           string
+	OCIProfile           string
+	OCIConfigPath        string
+	OCIRegion            string
 }
 
 type Plan struct {
@@ -101,6 +105,10 @@ type Target struct {
 	PrincipalMode        PrincipalMode      `json:"principalMode"`
 	PrincipalEmailDomain string             `json:"principalEmailDomain,omitempty"`
 	TemplateIDs          map[AppKind]string `json:"templateIds"`
+	OCIContext           string             `json:"ociContext,omitempty"`
+	OCIProfile           string             `json:"ociProfile,omitempty"`
+	OCIConfigPath        string             `json:"ociConfigPath,omitempty"`
+	OCIRegion            string             `json:"ociRegion,omitempty"`
 }
 
 type BaseCloudServiceApp struct {
@@ -315,6 +323,9 @@ func Build(options Options) (Plan, error) {
 		certificateAlias:     strings.TrimSpace(options.CertificateAlias),
 		accessTokenExpiry:    positivePtr(options.AccessTokenExpiry),
 		refreshTokenExpiry:   positivePtr(options.RefreshTokenExpiry),
+		ociProfile:           strings.TrimSpace(options.OCIProfile),
+		ociConfigPath:        strings.TrimSpace(options.OCIConfigPath),
+		ociRegion:            strings.TrimSpace(options.OCIRegion),
 	}
 
 	apps := make([]AppPlan, 0, len(includes))
@@ -364,6 +375,10 @@ func Build(options Options) (Plan, error) {
 			PrincipalMode:        principalMode,
 			PrincipalEmailDomain: normalizeEmailDomain(options.PrincipalEmailDomain),
 			TemplateIDs:          templateIDs,
+			OCIContext:           strings.TrimSpace(options.OCIContext),
+			OCIProfile:           strings.TrimSpace(options.OCIProfile),
+			OCIConfigPath:        strings.TrimSpace(options.OCIConfigPath),
+			OCIRegion:            strings.TrimSpace(options.OCIRegion),
 		},
 		BaseCloudServiceApp: baseCloudServiceApp(service, options),
 		Apps:                apps,
@@ -581,6 +596,9 @@ type buildContext struct {
 	certificateAlias     string
 	accessTokenExpiry    *int
 	refreshTokenExpiry   *int
+	ociProfile           string
+	ociConfigPath        string
+	ociRegion            string
 }
 
 func buildApp(kind AppKind, ctx buildContext) AppPlan {
@@ -598,6 +616,9 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			resourceAppID:      ctx.resourceAppID,
 			templateID:         ctx.templateIDs[AppUser],
 			idcsEndpoint:       ctx.idcsEndpoint,
+			ociProfile:         ctx.ociProfile,
+			ociConfigPath:      ctx.ociConfigPath,
+			ociRegion:          ctx.ociRegion,
 			allowOffline:       true,
 			bypassConsent:      true,
 			accessExpiry:       ctx.accessTokenExpiry,
@@ -620,6 +641,9 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			resourceAppID:        ctx.resourceAppID,
 			templateID:           ctx.templateIDs[AppService],
 			idcsEndpoint:         ctx.idcsEndpoint,
+			ociProfile:           ctx.ociProfile,
+			ociConfigPath:        ctx.ociConfigPath,
+			ociRegion:            ctx.ociRegion,
 			bypassConsent:        true,
 			accessExpiry:         ctx.accessTokenExpiry,
 			appRoleGrants:        ctx.appRoleGrants,
@@ -645,6 +669,9 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			resourceAppID:        ctx.resourceAppID,
 			templateID:           ctx.templateIDs[AppJWTService],
 			idcsEndpoint:         ctx.idcsEndpoint,
+			ociProfile:           ctx.ociProfile,
+			ociConfigPath:        ctx.ociConfigPath,
+			ociRegion:            ctx.ociRegion,
 			bypassConsent:        true,
 			accessExpiry:         ctx.accessTokenExpiry,
 			certAlias:            ctx.certificateAlias,
@@ -674,6 +701,9 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			resourceAppID: ctx.resourceAppID,
 			templateID:    ctx.templateIDs[AppJWTUser],
 			idcsEndpoint:  ctx.idcsEndpoint,
+			ociProfile:    ctx.ociProfile,
+			ociConfigPath: ctx.ociConfigPath,
+			ociRegion:     ctx.ociRegion,
 			bypassConsent: true,
 			accessExpiry:  ctx.accessTokenExpiry,
 			appRoleGrants: ctx.appRoleGrants,
@@ -698,6 +728,9 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 			resourceAppID: ctx.resourceAppID,
 			templateID:    ctx.templateIDs[AppWorkload],
 			idcsEndpoint:  ctx.idcsEndpoint,
+			ociProfile:    ctx.ociProfile,
+			ociConfigPath: ctx.ociConfigPath,
+			ociRegion:     ctx.ociRegion,
 			bypassConsent: true,
 			accessExpiry:  ctx.accessTokenExpiry,
 			appRoleGrants: ctx.appRoleGrants,
@@ -727,6 +760,9 @@ type appInput struct {
 	resourceAppID        string
 	templateID           string
 	idcsEndpoint         string
+	ociProfile           string
+	ociConfigPath        string
+	ociRegion            string
 	allowOffline         bool
 	bypassConsent        bool
 	certAlias            string
@@ -800,7 +836,7 @@ func appPlan(input appInput) AppPlan {
 		AllowedScopes:        []string{input.scope},
 		OCIPreCreate:         preCreate,
 		OCICreatePayloadFile: payloadFile,
-		OCICreateCommand:     "oci identity-domains app create --endpoint " + shellQuote(input.idcsEndpoint) + " --from-json file://" + payloadFile,
+		OCICreateCommand:     IdentityDomainsCommand(input.idcsEndpoint, input.ociProfile, input.ociConfigPath, input.ociRegion, "app", "create", "--from-json file://"+payloadFile),
 		OCICreatePayload:     payload,
 		Principal:            principal,
 		OCIPostCreate:        postCreate,
@@ -815,8 +851,7 @@ func oauthClientCertificateAction(input appInput, certAlias string) OCIAction {
 		Key:         "register-oauth-client-certificate",
 		Description: "Register the JWT client assertion public certificate before creating or patching the app certificate reference.",
 		PayloadFile: payloadFile,
-		Command: "oci identity-domains o-auth-client-certificate create --endpoint " + shellQuote(input.idcsEndpoint) +
-			" --from-json file://" + payloadFile,
+		Command:     IdentityDomainsCommand(input.idcsEndpoint, input.ociProfile, input.ociConfigPath, input.ociRegion, "o-auth-client-certificate", "create", "--from-json file://"+payloadFile),
 		Payload: OAuthClientCertificateInput{
 			Schemas:               []string{OAuthClientCertificateSchema},
 			CertificateAlias:      certAlias,
@@ -834,8 +869,7 @@ func appRoleGrantAction(input appInput, grant AppRoleGrant) OCIAction {
 		Key:         "grant-app-role",
 		Description: "Grant target service app role " + roleLabel + " to the created OAuth client app.",
 		PayloadFile: payloadFile,
-		Command: "oci identity-domains grant create --endpoint " + shellQuote(input.idcsEndpoint) +
-			" --from-json file://" + payloadFile,
+		Command:     IdentityDomainsCommand(input.idcsEndpoint, input.ociProfile, input.ociConfigPath, input.ociRegion, "grant", "create", "--from-json file://"+payloadFile),
 		Payload: GrantInput{
 			Schemas:        []string{GrantSchema},
 			GrantMechanism: AdministratorToAppGrant,
@@ -873,7 +907,7 @@ func principalPlan(input appInput) *PrincipalPlan {
 		UserName:      userName,
 		DisplayName:   displayName,
 		PayloadFile:   payloadFile,
-		CreateCommand: "oci identity-domains user create --endpoint " + shellQuote(input.idcsEndpoint) + " --from-json file://" + payloadFile,
+		CreateCommand: IdentityDomainsCommand(input.idcsEndpoint, input.ociProfile, input.ociConfigPath, input.ociRegion, "user", "create", "--from-json file://"+payloadFile),
 		CreatePayload: UserCreateInput{
 			Schemas:     []string{IDCSUserSchema},
 			UserName:    userName,
@@ -915,8 +949,7 @@ func principalUserRoleGrantAction(input appInput, principal PrincipalPlan, grant
 		Key:         "grant-principal-user-app-role",
 		Description: "Grant target service app role " + roleLabel + " to same-name principal user " + principal.UserName + ".",
 		PayloadFile: payloadFile,
-		Command: "oci identity-domains grant create --endpoint " + shellQuote(input.idcsEndpoint) +
-			" --from-json file://" + payloadFile,
+		Command:     IdentityDomainsCommand(input.idcsEndpoint, input.ociProfile, input.ociConfigPath, input.ociRegion, "grant", "create", "--from-json file://"+payloadFile),
 		Payload: GrantInput{
 			Schemas:        []string{GrantSchema},
 			GrantMechanism: AdministratorToUserGrant,
@@ -1111,6 +1144,26 @@ func adminResourceBase(endpoint string) string {
 		host += ":443"
 	}
 	return parsed.Scheme + "://" + host + "/admin/v1"
+}
+
+func IdentityDomainsCommand(endpoint, profile, configPath, region, resource, action string, args ...string) string {
+	parts := []string{
+		"oci identity-domains",
+		resource,
+		action,
+		"--endpoint " + shellQuote(endpoint),
+	}
+	if strings.TrimSpace(profile) != "" {
+		parts = append(parts, "--profile "+shellQuote(strings.TrimSpace(profile)))
+	}
+	if strings.TrimSpace(configPath) != "" {
+		parts = append(parts, "--config-file "+shellQuote(strings.TrimSpace(configPath)))
+	}
+	if strings.TrimSpace(region) != "" {
+		parts = append(parts, "--region "+shellQuote(strings.TrimSpace(region)))
+	}
+	parts = append(parts, args...)
+	return strings.Join(parts, " ")
 }
 
 func required(value string, name string) (string, error) {

@@ -3,11 +3,19 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		return nil, errors.New("oci-context unavailable in test")
+	}
+	os.Exit(m.Run())
+}
 
 func TestVersion(t *testing.T) {
 	var stdout bytes.Buffer
@@ -66,6 +74,55 @@ func TestPlanRejectsUnknownInclude(t *testing.T) {
 	}
 }
 
+func TestPlanUsesOCIContextDefaults(t *testing.T) {
+	restore := mockOCIContext(t, map[string]string{
+		"export -f json":            `{"name":"oabcs1","profile":"OABCS1","region":"us-sanjose-1"}`,
+		"paths -o json":             `{"oci_config_path":"/tmp/oci-config"}`,
+		"auth service list -o json": `[{"name":"obp","issuer":"https://idcs-example.identity.oraclecloud.com","scope":"https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy"}]`,
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"plan",
+		"--service", "obp",
+		"--resource-app-id", "resource-app-id",
+		"--include", "jwt-service",
+		"--format", "json",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run failed with %d: %s", code, stderr.String())
+	}
+
+	var payload struct {
+		Target struct {
+			Issuer        string `json:"issuer"`
+			Platform      string `json:"platform"`
+			Scope         string `json:"scope"`
+			OCIContext    string `json:"ociContext"`
+			OCIProfile    string `json:"ociProfile"`
+			OCIConfigPath string `json:"ociConfigPath"`
+			OCIRegion     string `json:"ociRegion"`
+		} `json:"target"`
+		Apps []struct {
+			OCICreateCommand string `json:"ociCreateCommand"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, stdout.String())
+	}
+	if payload.Target.OCIContext != "oabcs1" || payload.Target.OCIProfile != "OABCS1" || payload.Target.OCIConfigPath != "/tmp/oci-config" || payload.Target.OCIRegion != "us-sanjose-1" {
+		t.Fatalf("missing oci-context defaults: %+v", payload.Target)
+	}
+	if payload.Target.Issuer != "https://idcs-example.identity.oraclecloud.com" || payload.Target.Scope == "" || payload.Target.Platform == "" {
+		t.Fatalf("missing token service defaults: %+v", payload.Target)
+	}
+	if len(payload.Apps) != 1 || !strings.Contains(payload.Apps[0].OCICreateCommand, "--profile 'OABCS1'") || !strings.Contains(payload.Apps[0].OCICreateCommand, "--config-file '/tmp/oci-config'") || !strings.Contains(payload.Apps[0].OCICreateCommand, "--region 'us-sanjose-1'") {
+		t.Fatalf("generated command did not include context defaults: %+v", payload.Apps)
+	}
+}
+
 func TestDiscoverText(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -82,6 +139,32 @@ func TestDiscoverText(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{"search-apps", "get-resource-app", "search-grants-for-resource-app", "--profile 'DEFAULT'"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
+func TestDiscoverUsesDefaultOBPTokenService(t *testing.T) {
+	restore := mockOCIContext(t, map[string]string{
+		"export -f json":            `{"name":"oabcs1","profile":"OABCS1","region":"us-sanjose-1"}`,
+		"paths -o json":             `{"oci_config_path":"/tmp/oci-config"}`,
+		"auth service list -o json": `[{"name":"obp","issuer":"https://idcs-example.identity.oraclecloud.com","scope":"https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy"}]`,
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"discover",
+		"--query", "example",
+		"--format", "text",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run failed with %d: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"idcsEndpoint: https://idcs-example.identity.oraclecloud.com", "--profile 'OABCS1'", "--config-file '/tmp/oci-config'", "--region 'us-sanjose-1'"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in output:\n%s", want, out)
 		}
@@ -115,6 +198,34 @@ func TestDiagnoseText(t *testing.T) {
 		"--profile 'DEFAULT'",
 		"OBP_ADMIN_FORBIDDEN",
 	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
+func TestDiagnoseUsesOCIContextProfile(t *testing.T) {
+	restore := mockOCIContext(t, map[string]string{
+		"export -f json":            `{"name":"oabcs1","profile":"OABCS1","region":"us-sanjose-1"}`,
+		"paths -o json":             `{"oci_config_path":"/tmp/oci-config"}`,
+		"auth service list -o json": `[{"name":"obp","issuer":"https://idcs-example.identity.oraclecloud.com","scope":"https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy"}]`,
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"diagnose",
+		"--service", "obp",
+		"--resource-app-id", "resource-app-id",
+		"--candidate-app-id", "candidate-app-id",
+		"--format", "text",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run failed with %d: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"--profile 'OABCS1'", "--config-file '/tmp/oci-config'", "--region 'us-sanjose-1'"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in output:\n%s", want, out)
 		}
@@ -275,5 +386,23 @@ func TestHandoffOCIContextYAML(t *testing.T) {
 	}
 	if !strings.Contains(commands, "--flow 'jwt-client-credentials'") || !strings.Contains(commands, "--no-login") {
 		t.Fatalf("jwt-client-credentials command should include --no-login:\n%s", commands)
+	}
+}
+
+func mockOCIContext(t *testing.T, responses map[string]string) func() {
+	t.Helper()
+	previous := runCommand
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		if name != "oci-context" {
+			return nil, errors.New("unexpected command: " + name)
+		}
+		key := strings.Join(args, " ")
+		if response, ok := responses[key]; ok {
+			return []byte(response), nil
+		}
+		return nil, errors.New("unexpected args: " + key)
+	}
+	return func() {
+		runCommand = previous
 	}
 }
