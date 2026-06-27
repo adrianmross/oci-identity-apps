@@ -33,11 +33,17 @@ const (
 	AppWorkload                  AppKind     = "workload"
 	ClientPublic                 ClientType  = "public"
 	ClientConfidential           ClientType  = "confidential"
+	RolePresetNone               RolePreset  = "none"
+	RolePresetOBPAdmin           RolePreset  = "obp-admin"
+	RolePresetOBPRestClient      RolePreset  = "obp-rest-client"
+	RolePresetOBPUser            RolePreset  = "obp-user"
+	RolePresetOBPCAUser          RolePreset  = "obp-ca-user"
 )
 
 type ServiceKind string
 type AppKind string
 type ClientType string
+type RolePreset string
 
 type Options struct {
 	Service            ServiceKind
@@ -52,6 +58,7 @@ type Options struct {
 	RedirectURL        string
 	Include            []AppKind
 	UserClientType     ClientType
+	RolePresets        []RolePreset
 	AppRoleGrants      []AppRoleGrant
 	CertificateAlias   string
 	TemplateID         string
@@ -165,6 +172,8 @@ type OCIAction struct {
 type AppRoleGrant struct {
 	DisplayName string `json:"displayName,omitempty"`
 	ID          string `json:"id"`
+	Source      string `json:"source,omitempty"`
+	Required    bool   `json:"required,omitempty"`
 }
 
 type OAuthClientCertificateInput struct {
@@ -252,7 +261,7 @@ func Build(options Options) (Plan, error) {
 		resourceAppID:      strings.TrimSpace(options.ResourceAppID),
 		templateIDs:        templateIDs,
 		userClientType:     userClientType,
-		appRoleGrants:      append([]AppRoleGrant{}, options.AppRoleGrants...),
+		appRoleGrants:      resolveAppRoleGrants(options.RolePresets, options.AppRoleGrants),
 		certificateAlias:   strings.TrimSpace(options.CertificateAlias),
 		accessTokenExpiry:  positivePtr(options.AccessTokenExpiry),
 		refreshTokenExpiry: positivePtr(options.RefreshTokenExpiry),
@@ -345,6 +354,32 @@ func ParseClientType(value string) (ClientType, error) {
 	}
 }
 
+func ParseRolePresets(value string) ([]RolePreset, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	presets := make([]RolePreset, 0, len(parts))
+	seen := map[RolePreset]bool{}
+	for _, part := range parts {
+		preset := RolePreset(strings.TrimSpace(part))
+		if preset == "" || preset == RolePresetNone {
+			continue
+		}
+		switch preset {
+		case RolePresetOBPAdmin, RolePresetOBPRestClient, RolePresetOBPUser, RolePresetOBPCAUser:
+		default:
+			return nil, fmt.Errorf("unsupported role preset %q", preset)
+		}
+		if seen[preset] {
+			continue
+		}
+		seen[preset] = true
+		presets = append(presets, preset)
+	}
+	return presets, nil
+}
+
 func ParseAppRoleGrants(value string) ([]AppRoleGrant, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
@@ -352,6 +387,7 @@ func ParseAppRoleGrants(value string) ([]AppRoleGrant, error) {
 	parts := strings.Split(value, ",")
 	grants := make([]AppRoleGrant, 0, len(parts))
 	seen := map[string]bool{}
+	seenID := map[string]bool{}
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -367,13 +403,77 @@ func ParseAppRoleGrants(value string) ([]AppRoleGrant, error) {
 		if id == "" {
 			return nil, fmt.Errorf("empty app role id in %q", value)
 		}
-		if seen[id] {
+		key := display
+		if key == "" {
+			key = id
+		}
+		key = strings.ToUpper(key)
+		idKey := strings.ToUpper(id)
+		if seen[key] || seenID[idKey] {
 			continue
 		}
-		seen[id] = true
-		grants = append(grants, AppRoleGrant{DisplayName: display, ID: id})
+		seen[key] = true
+		seenID[idKey] = true
+		grants = append(grants, AppRoleGrant{DisplayName: display, ID: id, Source: "custom", Required: true})
 	}
 	return grants, nil
+}
+
+func resolveAppRoleGrants(presets []RolePreset, custom []AppRoleGrant) []AppRoleGrant {
+	merged := []AppRoleGrant{}
+	index := map[string]int{}
+	add := func(grant AppRoleGrant) {
+		key := strings.ToUpper(firstNonEmpty(grant.DisplayName, grant.ID))
+		if key == "" {
+			return
+		}
+		if existing, ok := index[key]; ok {
+			if grant.ID != "" && !strings.HasPrefix(grant.ID, "<") {
+				merged[existing].ID = grant.ID
+			}
+			if grant.DisplayName != "" {
+				merged[existing].DisplayName = grant.DisplayName
+			}
+			if grant.Source != "" {
+				merged[existing].Source = grant.Source
+			}
+			merged[existing].Required = merged[existing].Required || grant.Required
+			return
+		}
+		index[key] = len(merged)
+		merged = append(merged, grant)
+	}
+	for _, preset := range presets {
+		for _, grant := range rolePresetGrants(preset) {
+			add(grant)
+		}
+	}
+	for _, grant := range custom {
+		if grant.Source == "" {
+			grant.Source = "custom"
+		}
+		grant.Required = true
+		add(grant)
+	}
+	return merged
+}
+
+func rolePresetGrants(preset RolePreset) []AppRoleGrant {
+	switch preset {
+	case RolePresetOBPAdmin:
+		return []AppRoleGrant{
+			{DisplayName: "ADMIN", ID: "<ADMIN-app-role-id>", Source: string(preset), Required: true},
+			{DisplayName: "REST_CLIENT", ID: "<REST_CLIENT-app-role-id>", Source: string(preset), Required: true},
+		}
+	case RolePresetOBPRestClient:
+		return []AppRoleGrant{{DisplayName: "REST_CLIENT", ID: "<REST_CLIENT-app-role-id>", Source: string(preset), Required: true}}
+	case RolePresetOBPUser:
+		return []AppRoleGrant{{DisplayName: "USER", ID: "<USER-app-role-id>", Source: string(preset), Required: true}}
+	case RolePresetOBPCAUser:
+		return []AppRoleGrant{{DisplayName: "CA_USER", ID: "<CA_USER-app-role-id>", Source: string(preset), Required: true}}
+	default:
+		return nil
+	}
 }
 
 type buildContext struct {

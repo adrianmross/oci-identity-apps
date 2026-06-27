@@ -35,6 +35,8 @@ after an OAuth client exists:
 - scope ownership through `idOfDefiningApp`
 - OAuth client certificate registration for JWT client assertion
 - direct app-role grants from a service/resource app to a companion OAuth app
+- local payload/script materialization for reviewed application with OCI CLI
+- validation and cleanup command scaffolding
 
 ## Install
 
@@ -93,6 +95,29 @@ oci-identity-apps plan \
 
 ## Oracle Blockchain Platform Plan
 
+First generate discovery commands for the service-created OBP app:
+
+```bash
+oci-identity-apps discover \
+  --issuer https://idcs-example.identity.oraclecloud.com \
+  --query example-oabcs \
+  --format text
+```
+
+After you identify the service/resource app id, inspect its scopes and app
+roles:
+
+```bash
+oci-identity-apps discover \
+  --issuer https://idcs-example.identity.oraclecloud.com \
+  --app-id example-resource-app-id \
+  --format text
+```
+
+The discovery output is intentionally a command plan. Run the emitted OCI CLI
+commands in the tenancy context you intend to modify, then feed the discovered
+resource app id, scope, and app-role ids into `plan`.
+
 ```bash
 oci-identity-apps plan \
   --service obp \
@@ -121,6 +146,35 @@ oci-identity-apps plan \
   --format json > obp-jwt-service-plan.json
 ```
 
+You can also use a role preset first and fill in discovered role ids later:
+
+```bash
+oci-identity-apps plan \
+  --service obp \
+  --issuer https://idcs-example.identity.oraclecloud.com \
+  --platform https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy \
+  --resource-app-id example-resource-app-id \
+  --base-app-name example-obp_APPID \
+  --include jwt-service \
+  --role-preset obp-admin \
+  --format json > obp-jwt-service-plan.json
+```
+
+The built-in role presets are:
+
+- `obp-admin`: `ADMIN` and `REST_CLIENT`
+- `obp-rest-client`: `REST_CLIENT`
+- `obp-user`: `USER`
+- `obp-ca-user`: `CA_USER`
+
+Use `--app-role-grants NAME=APP_ROLE_ID` to provide custom grants or override
+preset placeholders. For example:
+
+```bash
+--role-preset obp-admin \
+--app-role-grants ADMIN=example-admin-role-id,REST_CLIENT=example-rest-client-role-id
+```
+
 That plan includes:
 
 - an `ociPreCreate` certificate registration payload for
@@ -131,6 +185,41 @@ That plan includes:
 
 After the app is created, replace `<created-app-id>` in the grant payloads with
 the `data.id` returned by `oci identity-domains app create`.
+
+Materialize the plan into reviewed payload files and helper scripts:
+
+```bash
+oci-identity-apps materialize \
+  --plan obp-jwt-service-plan.json \
+  --out ./obp-jwt-service-artifacts
+```
+
+`apply` is currently a dry-run convenience wrapper around materialization:
+
+```bash
+oci-identity-apps apply \
+  --plan obp-jwt-service-plan.json \
+  --out ./obp-jwt-service-artifacts
+```
+
+It writes the same artifact directory and refuses `--execute`. Run
+`apply.sh` yourself after reviewing payloads and replacing placeholders.
+
+The output directory contains:
+
+- `plan.json`
+- each OCI Identity Domains payload JSON file
+- `apply.sh`
+- `validate.sh`
+- `cleanup.sh`
+
+Validate the plan before and after materializing:
+
+```bash
+oci-identity-apps validate \
+  --plan obp-jwt-service-plan.json \
+  --format text
+```
 
 For OCI Identity Domains JWT client assertion, some domains require the local
 client assertion `aud` claim to be `https://identity.oraclecloud.com/` rather
@@ -167,6 +256,8 @@ Each planned app includes:
 
 Review and save each `ociCreatePayload` as its listed JSON file before running
 the emitted `oci identity-domains app create` command.
+
+`materialize` writes those payload files for you. It does not call OCI APIs.
 
 ## Public Safety
 

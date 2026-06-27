@@ -203,6 +203,39 @@ func TestParseAppRoleGrants(t *testing.T) {
 	}
 }
 
+func TestRolePresetCanBeOverriddenByCustomGrants(t *testing.T) {
+	plan, err := Build(Options{
+		Issuer:        "https://idcs.example.com",
+		Scope:         "https://service.example.com/.default",
+		ResourceAppID: "resource-app-id",
+		AppPrefix:     "example",
+		Include:       []AppKind{AppService},
+		RolePresets:   []RolePreset{RolePresetOBPAdmin},
+		AppRoleGrants: []AppRoleGrant{
+			{DisplayName: "ADMIN", ID: "real-admin-role-id"},
+			{DisplayName: "REST_CLIENT", ID: "real-rest-role-id"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if len(plan.Apps) != 1 {
+		t.Fatalf("unexpected apps: %#v", plan.Apps)
+	}
+	actions := plan.Apps[0].OCIPostCreate
+	if len(actions) != 2 {
+		t.Fatalf("expected two grants, got %d", len(actions))
+	}
+	first := actions[0].Payload.(GrantInput)
+	second := actions[1].Payload.(GrantInput)
+	if first.Entitlement.AttributeValue != "real-admin-role-id" {
+		t.Fatalf("unexpected admin role id: %#v", first.Entitlement)
+	}
+	if second.Entitlement.AttributeValue != "real-rest-role-id" {
+		t.Fatalf("unexpected rest role id: %#v", second.Entitlement)
+	}
+}
+
 func TestBuildRequiresScopeForGeneric(t *testing.T) {
 	if _, err := Build(Options{Issuer: "https://idcs.example.com"}); err == nil {
 		t.Fatal("expected missing scope error")

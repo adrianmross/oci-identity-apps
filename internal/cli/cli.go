@@ -7,7 +7,10 @@ import (
 	"io"
 	"strings"
 
+	"github.com/adrianmross/oci-identity-apps/internal/discovery"
+	"github.com/adrianmross/oci-identity-apps/internal/materialize"
 	"github.com/adrianmross/oci-identity-apps/internal/planner"
+	"github.com/adrianmross/oci-identity-apps/internal/validation"
 )
 
 var (
@@ -31,6 +34,30 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 0
 	case "plan":
 		if err := runPlan(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "discover":
+		if err := runDiscover(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "materialize":
+		if err := runMaterialize(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "apply":
+		if err := runApply(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "validate":
+		if err := runValidate(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -68,6 +95,7 @@ func runPlan(args []string, stdout io.Writer) error {
 	redirectURL := flags.String("redirect-url", planner.DefaultCLIRedirectURL, "loopback redirect URL for CLI auth-code flow")
 	include := flags.String("include", "user,service,jwt", "comma list of apps to plan: user,service,jwt,jwt-service,jwt-user,workload")
 	userClientType := flags.String("user-client-type", string(planner.ClientPublic), "user app client type: public or confidential")
+	rolePreset := flags.String("role-preset", "none", "comma list of service role presets: none,obp-admin,obp-rest-client,obp-user,obp-ca-user")
 	appRoleGrants := flags.String("app-role-grants", "", "comma list of target service app role grants as NAME=APP_ROLE_ID entries")
 	certificateAlias := flags.String("certificate-alias", "", "certificate alias for JWT client assertion apps; defaults to <app-name>-cert")
 	templateID := flags.String("template-id", "", "template id override for all planned apps")
@@ -97,6 +125,10 @@ func runPlan(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	presets, err := planner.ParseRolePresets(*rolePreset)
+	if err != nil {
+		return err
+	}
 	plan, err := planner.Build(planner.Options{
 		Service:            planner.ServiceKind(*service),
 		Platform:           *platform,
@@ -110,6 +142,7 @@ func runPlan(args []string, stdout io.Writer) error {
 		RedirectURL:        *redirectURL,
 		Include:            includes,
 		UserClientType:     clientType,
+		RolePresets:        presets,
 		AppRoleGrants:      grants,
 		CertificateAlias:   *certificateAlias,
 		TemplateID:         *templateID,
@@ -136,11 +169,158 @@ func runPlan(args []string, stdout io.Writer) error {
 	}
 }
 
+func runApply(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-identity-apps plan")
+	outDir := flags.String("out", "", "directory for generated apply artifacts")
+	execute := flags.Bool("execute", false, "execute OCI changes directly")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	if *execute {
+		return fmt.Errorf("--execute is intentionally not implemented; run materialize, review payloads, then run apply.sh explicitly")
+	}
+	if strings.TrimSpace(*planPath) == "" {
+		return fmt.Errorf("--plan is required")
+	}
+	result, err := materialize.FromPlanFile(*planPath, *outDir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "dry-run apply artifacts written to %s\n", result.OutDir)
+	fmt.Fprintf(stdout, "review payloads, replace placeholders, then run %s\n", result.OutDir+"/apply.sh")
+	return nil
+}
+
+func runDiscover(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("discover", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	issuer := flags.String("issuer", "", "OCI Identity Domains issuer URL")
+	idcsEndpoint := flags.String("idcs-endpoint", "", "OCI Identity Domains base endpoint")
+	query := flags.String("query", "", "service/app search text")
+	appID := flags.String("app-id", "", "service/resource app id to inspect")
+	profile := flags.String("profile", "", "optional OCI CLI profile to include in generated commands")
+	format := flags.String("format", "json", "output format: json or text")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	plan, err := discovery.Build(discovery.Options{
+		Issuer:       *issuer,
+		IDCSEndpoint: *idcsEndpoint,
+		Query:        *query,
+		AppID:        *appID,
+		Profile:      *profile,
+	})
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(plan)
+	case "text":
+		fmt.Fprintf(stdout, "idcsEndpoint: %s\n", plan.IDCSEndpoint)
+		for _, command := range plan.Commands {
+			fmt.Fprintf(stdout, "%s: %s\n  %s\n", command.Key, command.Description, command.Command)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q", *format)
+	}
+}
+
+func runMaterialize(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("materialize", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-identity-apps plan")
+	outDir := flags.String("out", "", "directory for payload JSON files and helper scripts")
+	format := flags.String("format", "text", "output format: text or json")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	if strings.TrimSpace(*planPath) == "" {
+		return fmt.Errorf("--plan is required")
+	}
+	result, err := materialize.FromPlanFile(*planPath, *outDir)
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	case "text":
+		fmt.Fprintf(stdout, "wrote %d files to %s\n", len(result.Files), result.OutDir)
+		for _, file := range result.Files {
+			fmt.Fprintf(stdout, "  %s\n", file)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q", *format)
+	}
+}
+
+func runValidate(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-identity-apps plan")
+	format := flags.String("format", "json", "output format: json or text")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	if strings.TrimSpace(*planPath) == "" {
+		return fmt.Errorf("--plan is required")
+	}
+	report, err := validation.FromPlanFile(*planPath)
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
+	case "text":
+		for _, check := range report.Checks {
+			fmt.Fprintf(stdout, "%s: %s", check.Status, check.Key)
+			if check.Message != "" {
+				fmt.Fprintf(stdout, " - %s", check.Message)
+			}
+			fmt.Fprintln(stdout)
+		}
+		for _, command := range report.Commands {
+			fmt.Fprintf(stdout, "manual: %s\n  %s\n", command.Key, command.Command)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q", *format)
+	}
+}
+
 func writeRootHelp(stdout io.Writer) {
 	fmt.Fprint(stdout, `oci-identity-apps plans OCI Identity Domains OAuth applications.
 
 Usage:
   oci-identity-apps plan [options]
+  oci-identity-apps discover [options]
+  oci-identity-apps materialize --plan plan.json --out ./idcs-artifacts
+  oci-identity-apps apply --plan plan.json --out ./idcs-artifacts
+  oci-identity-apps validate --plan plan.json
   oci-identity-apps version
 
 Plan options:
@@ -149,6 +329,7 @@ Plan options:
   --scope https://service.example.com
   --platform https://service.example.com
   --resource-app-id target-service-app-id
+  --role-preset obp-admin
   --app-role-grants ADMIN=app-role-id,REST_CLIENT=app-role-id
   --include user,service,jwt
     jwt expands to jwt-service,jwt-user,workload
