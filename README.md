@@ -73,6 +73,19 @@ oci-idm discover \
   --format text
 ```
 
+Diagnose a generated client app against a known-good app:
+
+```bash
+oci-idm diagnose \
+  --service obp \
+  --issuer https://idcs-example.identity.oraclecloud.com \
+  --resource-app-id example-resource-app-id \
+  --candidate-app-id generated-client-app-id \
+  --known-good-app-id known-working-client-app-id \
+  --profile DEFAULT \
+  --format text
+```
+
 Plan companion apps and service role grants:
 
 ```bash
@@ -85,6 +98,8 @@ oci-idm plan \
   --include user,jwt-service \
   --role-preset obp-admin \
   --app-role-grants ADMIN=example-admin-role-id,REST_CLIENT=example-rest-client-role-id \
+  --principal-mode auto \
+  --principal-email-domain example.invalid \
   --format json > idm-plan.json
 ```
 
@@ -158,6 +173,73 @@ The built-in OBP role presets are:
 Use `--app-role-grants NAME=APP_ROLE_ID` to provide custom grants or override
 preset placeholders.
 
+## Service Principals
+
+Some Oracle cloud services do not authorize a service-account token only by
+checking the OAuth client app's granted roles. Instead, the target service reads
+the access-token subject, resolves that subject as an OCI Identity Domains user,
+and then checks the user's service application roles.
+
+For client-credentials flows, OCI Identity Domains commonly sets the token
+subject to the OAuth client id. For those services, the required pattern is:
+
+- create the OAuth client app
+- create or reuse a user whose `userName` exactly matches the OAuth client id
+- grant service application roles to that user with `ADMINISTRATOR_TO_USER`
+- mint the token with the OAuth client, then validate the target service call
+
+`oci-idm` models this with `--principal-mode`:
+
+- `auto`: default; enables `same-name-user` for known services such as OBP and
+  otherwise resolves to `none`
+- `none`: create app resources and app-role grants only
+- `same-name-user`: also create a same-name principal user and user-role grants
+
+OCI Identity Domains requires a primary email for users. By default, generated
+principal users use `<client-id>@example.invalid`. Set
+`--principal-email-domain` to an approved internal domain or edit the
+materialized `*-principal-user.json` payload before applying it.
+
+For a generic service that uses this subject-to-user authorization pattern:
+
+```bash
+oci-idm plan \
+  --service generic \
+  --issuer https://idcs-example.identity.oraclecloud.com \
+  --scope https://service.example.com/.default \
+  --resource-app-id service-resource-app-id \
+  --include jwt-service \
+  --principal-mode same-name-user \
+  --principal-email-domain svc.example.com \
+  --app-role-grants SERVICE_ADMIN=service-admin-role-id \
+  --format json > idm-plan.json
+```
+
+For OBP/OBPCS REST proxy OAuth, Oracle documents that client-credentials tokens
+use the client id as the token subject. OBP then looks up application roles for
+that subject as a user. See Oracle's OBP OAuth authentication documentation:
+<https://docs.oracle.com/en/cloud/paas/blockchain-cloud/restoci/UseOAuth.html>.
+This is why OBP service-account plans use `same-name-user` in `auto` mode.
+
+## Diagnosis
+
+`oci-idm diagnose` emits safe OCI CLI commands for comparing a service/resource
+app, a candidate OAuth client app, and an optional known-good client app. It
+checks the surfaces that matter for CLI and automation handoff:
+
+- service app metadata and app-role projections
+- direct `Grant` resources for the candidate and known-good app
+- `granted-app-roles` projected onto the candidate app
+- same-name user lookup for services that resolve token subjects as users
+- user `Grant` resources for the candidate and known-good principal user
+- `AccountMgmtInfo` rows for the service/resource app
+
+For OBP/OBPCS, a token can mint successfully and the candidate app can show the
+expected app-side `granted-app-roles`, while OBPCS still returns
+`OBP_ADMIN_FORBIDDEN` with `Failed to get application role for user`. In that
+case, check whether a same-name user exists and has `ADMINISTRATOR_TO_USER`
+grants for the OBP `ADMIN` and `REST_CLIENT` app roles.
+
 ## Apply Model
 
 `apply` is still a dry-run convenience wrapper around materialization:
@@ -167,7 +249,8 @@ oci-idm apply --plan idm-plan.json --out ./idm-artifacts
 ```
 
 It refuses `--execute`. Review payloads, replace placeholders such as
-`<created-app-id>`, then run the generated scripts yourself.
+`<created-app-id>` and `<principal-user-id-for-...>`, then run the generated
+scripts yourself.
 
 ## Compatibility
 

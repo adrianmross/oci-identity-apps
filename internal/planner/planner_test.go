@@ -33,6 +33,9 @@ func TestBuildGenericPlan(t *testing.T) {
 	if len(plan.Apps) != 5 {
 		t.Fatalf("expected 5 apps, got %d", len(plan.Apps))
 	}
+	if plan.Target.PrincipalMode != PrincipalNone {
+		t.Fatalf("generic service should default to no principal user, got %s", plan.Target.PrincipalMode)
+	}
 	user := plan.Apps[0]
 	if user.Name != "example-service-cli-user" {
 		t.Fatalf("unexpected user app name: %s", user.Name)
@@ -129,8 +132,14 @@ func TestBuildOBPPlanIncludesResourceAppRolesAndJWTCertificate(t *testing.T) {
 	if certPayload.CertificateAlias != "example-obp-service-jwt-cert" {
 		t.Fatalf("unexpected cert alias: %s", certPayload.CertificateAlias)
 	}
-	if len(app.OCIPostCreate) != 2 {
-		t.Fatalf("expected two app-role grant actions, got %d", len(app.OCIPostCreate))
+	if app.Principal == nil {
+		t.Fatal("expected OBP jwt-service to plan a same-name principal user")
+	}
+	if app.Principal.UserName != "example-obp-service-jwt" {
+		t.Fatalf("unexpected principal user name: %s", app.Principal.UserName)
+	}
+	if len(app.OCIPostCreate) != 5 {
+		t.Fatalf("expected app-role grants, principal user, and user grants, got %d", len(app.OCIPostCreate))
 	}
 	grantPayload, ok := app.OCIPostCreate[0].Payload.(GrantInput)
 	if !ok {
@@ -144,6 +153,20 @@ func TestBuildOBPPlanIncludesResourceAppRolesAndJWTCertificate(t *testing.T) {
 	}
 	if grantPayload.Grantee.Value != "<created-app-id>" {
 		t.Fatalf("expected created app placeholder, got %#v", grantPayload.Grantee)
+	}
+	userPayload, ok := app.OCIPostCreate[2].Payload.(UserCreateInput)
+	if !ok {
+		t.Fatalf("unexpected principal user payload type: %#v", app.OCIPostCreate[2].Payload)
+	}
+	if userPayload.UserName != app.Name {
+		t.Fatalf("expected same-name user, got %#v", userPayload)
+	}
+	userGrantPayload, ok := app.OCIPostCreate[3].Payload.(GrantInput)
+	if !ok {
+		t.Fatalf("unexpected user grant payload type: %#v", app.OCIPostCreate[3].Payload)
+	}
+	if userGrantPayload.GrantMechanism != AdministratorToUserGrant || userGrantPayload.Grantee.Type != "User" {
+		t.Fatalf("expected user grant, got %#v", userGrantPayload)
 	}
 }
 
@@ -187,6 +210,29 @@ func TestParseIncludes(t *testing.T) {
 	}
 	if _, err := ParseIncludes("cloudgate"); err == nil {
 		t.Fatal("expected unsupported include error")
+	}
+}
+
+func TestPrincipalModeExplicitForGenericService(t *testing.T) {
+	plan, err := Build(Options{
+		Service:       ServiceGeneric,
+		Issuer:        "https://idcs.example.com",
+		Scope:         "https://service.example.com/.default",
+		ResourceAppID: "resource-app-id",
+		AppPrefix:     "example",
+		Include:       []AppKind{AppService},
+		PrincipalMode: PrincipalSameNameUser,
+		AppRoleGrants: []AppRoleGrant{{DisplayName: "SERVICE_ADMIN", ID: "service-admin-role-id"}},
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	app := plan.Apps[0]
+	if app.Principal == nil || app.Principal.Mode != PrincipalSameNameUser {
+		t.Fatalf("expected same-name principal: %#v", app.Principal)
+	}
+	if len(app.OCIPostCreate) != 3 {
+		t.Fatalf("expected app grant, user create, and user grant, got %d", len(app.OCIPostCreate))
 	}
 }
 
