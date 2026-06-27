@@ -89,6 +89,64 @@ func TestBuildOBPPlanDefaultsScopeToPlatform(t *testing.T) {
 	}
 }
 
+func TestBuildOBPPlanIncludesResourceAppRolesAndJWTCertificate(t *testing.T) {
+	plan, err := Build(Options{
+		Service:       ServiceOBP,
+		Issuer:        "https://idcs-example.identity.oraclecloud.com",
+		Platform:      "https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy",
+		ResourceAppID: "resource-app-id",
+		BaseAppName:   "example-obp_APPID",
+		Include:       []AppKind{AppJWTService},
+		AppRoleGrants: []AppRoleGrant{
+			{DisplayName: "ADMIN", ID: "admin-role-id"},
+			{DisplayName: "REST_CLIENT", ID: "rest-role-id"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+
+	if plan.Target.ResourceAppID != "resource-app-id" {
+		t.Fatalf("unexpected resource app id: %s", plan.Target.ResourceAppID)
+	}
+	if len(plan.Apps) != 1 {
+		t.Fatalf("expected one app, got %d", len(plan.Apps))
+	}
+	app := plan.Apps[0]
+	if app.OCICreatePayload.AllowedScopes[0].IDOfDefiningApp != "resource-app-id" {
+		t.Fatalf("missing idOfDefiningApp: %#v", app.OCICreatePayload.AllowedScopes[0])
+	}
+	if len(app.OCICreatePayload.Certificates) != 1 {
+		t.Fatalf("expected certificate reference: %#v", app.OCICreatePayload.Certificates)
+	}
+	if len(app.OCIPreCreate) != 1 {
+		t.Fatalf("expected certificate pre-create action, got %d", len(app.OCIPreCreate))
+	}
+	certPayload, ok := app.OCIPreCreate[0].Payload.(OAuthClientCertificateInput)
+	if !ok {
+		t.Fatalf("unexpected cert payload type: %#v", app.OCIPreCreate[0].Payload)
+	}
+	if certPayload.CertificateAlias != "example-obp-service-jwt-cert" {
+		t.Fatalf("unexpected cert alias: %s", certPayload.CertificateAlias)
+	}
+	if len(app.OCIPostCreate) != 2 {
+		t.Fatalf("expected two app-role grant actions, got %d", len(app.OCIPostCreate))
+	}
+	grantPayload, ok := app.OCIPostCreate[0].Payload.(GrantInput)
+	if !ok {
+		t.Fatalf("unexpected grant payload type: %#v", app.OCIPostCreate[0].Payload)
+	}
+	if grantPayload.App.Value != "resource-app-id" {
+		t.Fatalf("unexpected grant app: %#v", grantPayload.App)
+	}
+	if grantPayload.Entitlement.AttributeValue != "admin-role-id" {
+		t.Fatalf("unexpected grant entitlement: %#v", grantPayload.Entitlement)
+	}
+	if grantPayload.Grantee.Value != "<created-app-id>" {
+		t.Fatalf("expected created app placeholder, got %#v", grantPayload.Grantee)
+	}
+}
+
 func TestBuildConfidentialUserAndTemplateOverrides(t *testing.T) {
 	plan, err := Build(Options{
 		Issuer:             "https://idcs.example.com",
@@ -129,6 +187,52 @@ func TestParseIncludes(t *testing.T) {
 	}
 	if _, err := ParseIncludes("cloudgate"); err == nil {
 		t.Fatal("expected unsupported include error")
+	}
+}
+
+func TestParseAppRoleGrants(t *testing.T) {
+	grants, err := ParseAppRoleGrants("ADMIN=admin-role-id, REST_CLIENT=rest-role-id,admin-role-id")
+	if err != nil {
+		t.Fatalf("ParseAppRoleGrants returned error: %v", err)
+	}
+	if len(grants) != 2 {
+		t.Fatalf("unexpected grants: %#v", grants)
+	}
+	if grants[0].DisplayName != "ADMIN" || grants[0].ID != "admin-role-id" {
+		t.Fatalf("unexpected first grant: %#v", grants[0])
+	}
+}
+
+func TestRolePresetCanBeOverriddenByCustomGrants(t *testing.T) {
+	plan, err := Build(Options{
+		Issuer:        "https://idcs.example.com",
+		Scope:         "https://service.example.com/.default",
+		ResourceAppID: "resource-app-id",
+		AppPrefix:     "example",
+		Include:       []AppKind{AppService},
+		RolePresets:   []RolePreset{RolePresetOBPAdmin},
+		AppRoleGrants: []AppRoleGrant{
+			{DisplayName: "ADMIN", ID: "real-admin-role-id"},
+			{DisplayName: "REST_CLIENT", ID: "real-rest-role-id"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if len(plan.Apps) != 1 {
+		t.Fatalf("unexpected apps: %#v", plan.Apps)
+	}
+	actions := plan.Apps[0].OCIPostCreate
+	if len(actions) != 2 {
+		t.Fatalf("expected two grants, got %d", len(actions))
+	}
+	first := actions[0].Payload.(GrantInput)
+	second := actions[1].Payload.(GrantInput)
+	if first.Entitlement.AttributeValue != "real-admin-role-id" {
+		t.Fatalf("unexpected admin role id: %#v", first.Entitlement)
+	}
+	if second.Entitlement.AttributeValue != "real-rest-role-id" {
+		t.Fatalf("unexpected rest role id: %#v", second.Entitlement)
 	}
 }
 
