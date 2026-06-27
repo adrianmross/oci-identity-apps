@@ -18,7 +18,12 @@ This tool plans companion OAuth clients for common flows:
 
 - `user`: Authorization Code + Refresh Token for local CLI login helpers.
 - `service`: Client Credentials for non-human automation.
-- `jwt`: JWT Bearer for trusted assertion exchange.
+- `jwt-service`: service-account Client Credentials with JWT client assertion.
+- `jwt-user`: JWT Bearer assertion exchange for user or subject representation.
+- `workload`: token exchange for trusted workload identity JWTs.
+
+The `jwt` include is a convenience alias that expands to
+`jwt-service,jwt-user,workload`.
 
 The default service mode is generic. The `obp` preset adds Oracle Blockchain
 Platform notes, including the common CloudGate callback limitation and OBP
@@ -66,6 +71,17 @@ oci-identity-apps plan \
   --app-prefix example-service \
   --include user,service,jwt \
   --format json > identity-app-plan.json
+```
+
+Use a narrower include list when you only need one identity style:
+
+```bash
+oci-identity-apps plan \
+  --issuer https://idcs-example.identity.oraclecloud.com \
+  --scope https://service.example.com/.default \
+  --app-prefix example-service \
+  --include jwt-service \
+  --format json > service-account-jwt-plan.json
 ```
 
 ## Oracle Blockchain Platform Plan

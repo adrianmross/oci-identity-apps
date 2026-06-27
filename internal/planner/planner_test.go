@@ -30,8 +30,8 @@ func TestBuildGenericPlan(t *testing.T) {
 	if got := plan.Target.TemplateIDs[AppService]; got != DefaultWebAppTemplateID {
 		t.Fatalf("unexpected service template: %s", got)
 	}
-	if len(plan.Apps) != 3 {
-		t.Fatalf("expected 3 apps, got %d", len(plan.Apps))
+	if len(plan.Apps) != 5 {
+		t.Fatalf("expected 5 apps, got %d", len(plan.Apps))
 	}
 	user := plan.Apps[0]
 	if user.Name != "example-service-cli-user" {
@@ -48,6 +48,21 @@ func TestBuildGenericPlan(t *testing.T) {
 	}
 	if user.OCICreatePayload.AllURLSchemes == nil || !*user.OCICreatePayload.AllURLSchemes {
 		t.Fatal("expected user app payload to allow the loopback http redirect scheme")
+	}
+	jwtService := plan.Apps[2]
+	if jwtService.Key != AppJWTService || jwtService.Name != "example-service-service-jwt" {
+		t.Fatalf("unexpected service JWT app: %+v", jwtService)
+	}
+	if jwtService.OCICreatePayload.AllowedGrants[0] != ClientCredentialsGrant {
+		t.Fatalf("unexpected service JWT grant: %v", jwtService.OCICreatePayload.AllowedGrants)
+	}
+	jwtUser := plan.Apps[3]
+	if jwtUser.Key != AppJWTUser || jwtUser.OCICreatePayload.AllowedGrants[0] != JWTBearerGrant {
+		t.Fatalf("unexpected user JWT app: %+v", jwtUser)
+	}
+	workload := plan.Apps[4]
+	if workload.Key != AppWorkload || workload.OCICreatePayload.AllowedGrants[0] != TokenExchangeGrant {
+		t.Fatalf("unexpected workload app: %+v", workload)
 	}
 }
 
@@ -105,7 +120,11 @@ func TestParseIncludes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseIncludes returned error: %v", err)
 	}
-	if len(includes) != 2 || includes[0] != AppService || includes[1] != AppJWT {
+	if len(includes) != 4 ||
+		includes[0] != AppService ||
+		includes[1] != AppJWTService ||
+		includes[2] != AppJWTUser ||
+		includes[3] != AppWorkload {
 		t.Fatalf("unexpected includes: %#v", includes)
 	}
 	if _, err := ParseIncludes("cloudgate"); err == nil {

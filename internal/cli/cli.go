@@ -65,7 +65,7 @@ func runPlan(args []string, stdout io.Writer) error {
 	baseAppDisplayName := flags.String("base-app-display-name", "", "service-created app display name")
 	appPrefix := flags.String("app-prefix", "", "prefix for generated companion app names")
 	redirectURL := flags.String("redirect-url", planner.DefaultCLIRedirectURL, "loopback redirect URL for CLI auth-code flow")
-	include := flags.String("include", "user,service,jwt", "comma list of apps to plan: user,service,jwt")
+	include := flags.String("include", "user,service,jwt", "comma list of apps to plan: user,service,jwt,jwt-service,jwt-user,workload")
 	userClientType := flags.String("user-client-type", string(planner.ClientPublic), "user app client type: public or confidential")
 	templateID := flags.String("template-id", "", "template id override for all planned apps")
 	userTemplateID := flags.String("user-template-id", "", "template id for the user app")
@@ -139,6 +139,7 @@ Plan options:
   --scope https://service.example.com
   --platform https://service.example.com
   --include user,service,jwt
+    jwt expands to jwt-service,jwt-user,workload
   --format json|text
 `)
 }
