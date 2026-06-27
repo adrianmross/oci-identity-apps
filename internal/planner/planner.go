@@ -116,6 +116,7 @@ type AppCreateInput struct {
 	AllowedGrants      []string       `json:"allowedGrants"`
 	AllowedScopes      []AllowedScope `json:"allowedScopes"`
 	RedirectURIs       []string       `json:"redirectUris,omitempty"`
+	AllURLSchemes      *bool          `json:"allUrlSchemesAllowed,omitempty"`
 	BypassConsent      *bool          `json:"bypassConsent,omitempty"`
 	AllowOffline       *bool          `json:"allowOffline,omitempty"`
 	AccessTokenExpiry  *int           `json:"accessTokenExpiry,omitempty"`
@@ -378,6 +379,9 @@ func appPlan(input appInput) AppPlan {
 		AllowedScopes:   []AllowedScope{{FQS: input.scope}},
 		RedirectURIs:    append([]string{}, input.redirectURIs...),
 	}
+	if hasNonHTTPSRedirect(input.redirectURIs) {
+		payload.AllURLSchemes = boolPtr(true)
+	}
 	if input.bypassConsent {
 		payload.BypassConsent = boolPtr(true)
 	}
@@ -565,6 +569,15 @@ func firstNonEmpty(values ...string) string {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+func hasNonHTTPSRedirect(redirectURIs []string) bool {
+	for _, redirectURI := range redirectURIs {
+		if strings.TrimSpace(redirectURI) != "" && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(redirectURI)), "https://") {
+			return true
+		}
+	}
+	return false
 }
 
 func positivePtr(value int) *int {
