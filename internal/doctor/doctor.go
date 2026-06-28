@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 
@@ -30,7 +31,7 @@ type Report struct {
 }
 
 func FromPlanFile(path string, defaults Defaults) (Report, error) {
-	data, err := os.ReadFile(path)
+	data, err := readPlanBytes(path)
 	if err != nil {
 		return Report{}, err
 	}
@@ -39,6 +40,13 @@ func FromPlanFile(path string, defaults Defaults) (Report, error) {
 		return Report{}, err
 	}
 	return FromPlan(plan, defaults), nil
+}
+
+func readPlanBytes(path string) ([]byte, error) {
+	if strings.TrimSpace(path) == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
 }
 
 func FromPlan(plan planner.Plan, defaults Defaults) Report {

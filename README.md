@@ -159,6 +159,14 @@ plan:
 oci-idm doctor --plan idm-plan.json --format text
 ```
 
+Plan-consuming commands also accept `--plan -`, so checks and handoffs can be
+composed without temporary plan files:
+
+```bash
+oci-idm plan --service obp --resource-app-id example-resource-app-id |
+  oci-idm doctor --plan - --format text
+```
+
 ## oci-context Handoff
 
 Preview the token-service handoff without materializing files:
@@ -183,6 +191,28 @@ oci-idm handoff \
 ```
 
 Use `--dry-run` to preview the `oci-context auth service import` result.
+
+When using an `oci-context` version that supports stdin import, the handoff can
+be fully pipe-driven:
+
+```bash
+oci-idm plan --service obp --resource-app-id example-resource-app-id |
+  oci-idm handoff --plan - --format yaml |
+  oci-context auth service import --file -
+```
+
+For OChain, emit the token-command contract directly from the same plan:
+
+```bash
+oci-idm handoff \
+  --plan idm-plan.json \
+  --format ochain-env
+```
+
+That writes an `OCHAIN_TOKEN_COMMAND` export using the generated
+`oci-context` token service. By default it chooses the first non-browser token
+service, such as `obp-jwt-service`; pass `--token-service obp` when you want a
+cached authorization-code user token instead.
 
 For a planned OBP authorization-code app:
 

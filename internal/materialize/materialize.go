@@ -3,6 +3,7 @@ package materialize
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ type Result struct {
 }
 
 func FromPlanFile(planPath string, outDir string) (Result, error) {
-	data, err := os.ReadFile(planPath)
+	data, err := readPlanBytes(planPath)
 	if err != nil {
 		return Result{}, err
 	}
@@ -26,9 +27,20 @@ func FromPlanFile(planPath string, outDir string) (Result, error) {
 		return Result{}, err
 	}
 	if strings.TrimSpace(outDir) == "" {
-		outDir = strings.TrimSuffix(filepath.Base(planPath), filepath.Ext(planPath)) + "-artifacts"
+		if strings.TrimSpace(planPath) == "-" {
+			outDir = "oci-idm-artifacts"
+		} else {
+			outDir = strings.TrimSuffix(filepath.Base(planPath), filepath.Ext(planPath)) + "-artifacts"
+		}
 	}
 	return FromPlan(plan, outDir)
+}
+
+func readPlanBytes(path string) ([]byte, error) {
+	if strings.TrimSpace(path) == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
 }
 
 func FromPlan(plan planner.Plan, outDir string) (Result, error) {

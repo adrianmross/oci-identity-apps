@@ -491,6 +491,69 @@ func TestHandoffOCIContextYAML(t *testing.T) {
 	}
 }
 
+func TestHandoffReadsPlanFromStdin(t *testing.T) {
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	var planOut bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"plan",
+		"--service", "obp",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--platform", "https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy",
+		"--include", "user",
+	}, &planOut, &stderr)
+	if code != 0 {
+		t.Fatalf("plan failed with %d: %s", code, stderr.String())
+	}
+	if err := os.WriteFile(planPath, planOut.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	previous := stdinReader
+	stdinReader = bytes.NewReader(planOut.Bytes())
+	defer func() { stdinReader = previous }()
+
+	var handoffOut bytes.Buffer
+	code = Run([]string{"handoff", "--plan", "-", "--format", "yaml"}, &handoffOut, &stderr)
+	if code != 0 {
+		t.Fatalf("handoff stdin failed with %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(handoffOut.String(), "token_services:") || !strings.Contains(handoffOut.String(), "name: 'obp'") {
+		t.Fatalf("unexpected handoff output:\n%s", handoffOut.String())
+	}
+}
+
+func TestHandoffOChainEnv(t *testing.T) {
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	var planOut bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"plan",
+		"--service", "obp",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--platform", "https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy",
+		"--include", "user,jwt-service",
+	}, &planOut, &stderr)
+	if code != 0 {
+		t.Fatalf("plan failed with %d: %s", code, stderr.String())
+	}
+	if err := os.WriteFile(planPath, planOut.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var handoffOut bytes.Buffer
+	code = Run([]string{"handoff", "--plan", planPath, "--format", "ochain-env"}, &handoffOut, &stderr)
+	if code != 0 {
+		t.Fatalf("handoff ochain-env failed with %d: %s", code, stderr.String())
+	}
+	out := handoffOut.String()
+	if !strings.Contains(out, "export OCHAIN_TOKEN_COMMAND=") || !strings.Contains(out, "obp-jwt-service") || !strings.Contains(out, "--no-login --format raw") {
+		t.Fatalf("unexpected OChain handoff:\n%s", out)
+	}
+}
+
 func TestHandoffImport(t *testing.T) {
 	restore := mockOCIContext(t, map[string]string{
 		"auth service import --file " + filepath.Join("ARTIFACTS", "oci-context-token-services.yml") + " --dry-run": "import ok\n",

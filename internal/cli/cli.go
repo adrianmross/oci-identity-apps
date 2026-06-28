@@ -20,9 +20,10 @@ import (
 )
 
 var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
+	version     = "dev"
+	commit      = "none"
+	date        = "unknown"
+	stdinReader = io.Reader(os.Stdin)
 )
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -557,11 +558,12 @@ func runHandoff(args []string, stdout io.Writer) error {
 	flags.SetOutput(io.Discard)
 	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-idm plan")
 	target := flags.String("target", "oci-context", "handoff target: oci-context")
-	format := flags.String("format", "json", "output format for --target oci-context: json, yaml, or commands")
+	format := flags.String("format", "json", "output format for --target oci-context: json, yaml, commands, ochain-env, or ochain-json")
 	importToOCIContext := flags.Bool("import", false, "import generated token services into oci-context")
 	importDryRun := flags.Bool("dry-run", false, "preview oci-context import changes without writing config")
 	outDir := flags.String("out", "", "directory for generated handoff artifacts when using --import")
 	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for --import")
+	tokenService := flags.String("token-service", "", "token service name for OChain handoff output")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -610,13 +612,33 @@ func runHandoff(args []string, stdout io.Writer) error {
 	case "commands", "sh", "shell":
 		fmt.Fprint(stdout, handoff.TokenCommandsScript(ociContext))
 		return nil
+	case "ochain-env", "ochain":
+		env, err := handoff.OChainEnv(ociContext, *tokenService)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(stdout, env)
+		return nil
+	case "ochain-json":
+		data, err := handoff.OChainJSON(ociContext, *tokenService)
+		if err != nil {
+			return err
+		}
+		_, err = stdout.Write(data)
+		return err
 	default:
 		return fmt.Errorf("unsupported format %q", *format)
 	}
 }
 
 func readPlanFile(path string) (planner.Plan, error) {
-	data, err := os.ReadFile(path)
+	var data []byte
+	var err error
+	if strings.TrimSpace(path) == "-" {
+		data, err = io.ReadAll(stdinReader)
+	} else {
+		data, err = os.ReadFile(path)
+	}
 	if err != nil {
 		return planner.Plan{}, err
 	}
@@ -638,6 +660,7 @@ Usage:
   %s doctor [--plan plan.json]
   %s materialize --plan plan.json --out ./idcs-artifacts
   %s handoff --plan plan.json --target oci-context --format yaml
+  %s handoff --plan plan.json --format ochain-env
   %s handoff --plan plan.json --import --out ./idcs-artifacts
   %s apply --plan plan.json --out ./idcs-artifacts
   %s apply --plan plan.json --execute --confirm
@@ -661,7 +684,12 @@ Plan options:
   --oci-context-service obp
     token service name for issuer/scope defaults
   --format json|text
-`, program, program, program, program, program, program, program, program, program, program, program, program, program)
+
+Pipe contracts:
+  plan-consuming commands accept --plan - for stdin
+  handoff --format yaml can pipe into oci-context auth service import --file -
+  handoff --format ochain-env emits OCHAIN_TOKEN_COMMAND
+`, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
 }
 
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {
