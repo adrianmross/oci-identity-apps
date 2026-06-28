@@ -123,6 +123,28 @@ func TestPlanUsesOCIContextDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultsText(t *testing.T) {
+	restore := mockOCIContext(t, map[string]string{
+		"export -f json":            `{"name":"oabcs1","profile":"OABCS1","region":"us-sanjose-1"}`,
+		"paths -o json":             `{"oci_config_path":"/tmp/oci-config"}`,
+		"auth service list -o json": `[{"name":"obp","issuer":"https://idcs-example.identity.oraclecloud.com","scope":"https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy"}]`,
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"defaults", "--format", "text"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run failed with %d: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"context: oabcs1", "profile: OABCS1", "issuer: https://idcs-example.identity.oraclecloud.com"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
 func TestDiscoverText(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -232,6 +254,45 @@ func TestDiagnoseUsesOCIContextProfile(t *testing.T) {
 	}
 }
 
+func TestDoctorWithPlan(t *testing.T) {
+	restore := mockOCIContext(t, map[string]string{
+		"export -f json":            `{"name":"oabcs1","profile":"OABCS1","region":"us-sanjose-1"}`,
+		"paths -o json":             `{"oci_config_path":"/tmp/oci-config"}`,
+		"auth service list -o json": `[{"name":"obp","issuer":"https://idcs-example.identity.oraclecloud.com","scope":"https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy"}]`,
+	})
+	defer restore()
+
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	var planOut bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"plan",
+		"--service", "obp",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--platform", "https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy",
+		"--include", "user",
+	}, &planOut, &stderr)
+	if code != 0 {
+		t.Fatalf("plan failed with %d: %s", code, stderr.String())
+	}
+	if err := os.WriteFile(planPath, planOut.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var doctorOut bytes.Buffer
+	code = Run([]string{"doctor", "--plan", planPath, "--format", "text"}, &doctorOut, &stderr)
+	if code != 0 {
+		t.Fatalf("doctor failed with %d: %s", code, stderr.String())
+	}
+	out := doctorOut.String()
+	for _, want := range []string{"pass: oci-context-current", "pass: issuer", "pass: oci-context-handoff"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
 func TestMaterializeAndValidate(t *testing.T) {
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.json")
@@ -321,6 +382,47 @@ func TestMaterializeAndValidate(t *testing.T) {
 	}
 }
 
+func TestApplyExecuteCreatesApp(t *testing.T) {
+	restore := mockRunner(func(name string, args ...string) ([]byte, error) {
+		joined := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "identity-domains apps search"):
+			return []byte(`{"Resources":[]}`), nil
+		case strings.Contains(joined, "identity-domains app create"):
+			return []byte(`{"data":{"id":"created-app-id"}}`), nil
+		default:
+			return nil, errors.New("unexpected command: " + joined)
+		}
+	})
+	defer restore()
+
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	var planOut bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"plan",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--scope", "https://service.example.com/.default",
+		"--include", "user",
+	}, &planOut, &stderr)
+	if code != 0 {
+		t.Fatalf("plan failed with %d: %s", code, stderr.String())
+	}
+	if err := os.WriteFile(planPath, planOut.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var applyOut bytes.Buffer
+	code = Run([]string{"apply", "--plan", planPath, "--out", filepath.Join(dir, "apply"), "--execute", "--confirm", "--format", "text"}, &applyOut, &stderr)
+	if code != 0 {
+		t.Fatalf("apply execute failed with %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(applyOut.String(), "created: app-") || !strings.Contains(applyOut.String(), "id=created-app-id") {
+		t.Fatalf("unexpected apply output:\n%s", applyOut.String())
+	}
+}
+
 func TestHandoffOCIContextYAML(t *testing.T) {
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.json")
@@ -389,6 +491,46 @@ func TestHandoffOCIContextYAML(t *testing.T) {
 	}
 }
 
+func TestHandoffImport(t *testing.T) {
+	restore := mockOCIContext(t, map[string]string{
+		"auth service import --file " + filepath.Join("ARTIFACTS", "oci-context-token-services.yml") + " --dry-run": "import ok\n",
+	})
+	defer restore()
+
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.json")
+	outDir := filepath.Join(dir, "ARTIFACTS")
+	var planOut bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"plan",
+		"--service", "obp",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--platform", "https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy",
+		"--include", "user",
+	}, &planOut, &stderr)
+	if code != 0 {
+		t.Fatalf("plan failed with %d: %s", code, stderr.String())
+	}
+	if err := os.WriteFile(planPath, planOut.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedKey := "auth service import --file " + filepath.Join(outDir, "oci-context-token-services.yml") + " --dry-run"
+	restore()
+	restore = mockOCIContext(t, map[string]string{expectedKey: "import ok\n"})
+	defer restore()
+
+	var handoffOut bytes.Buffer
+	code = Run([]string{"handoff", "--plan", planPath, "--import", "--dry-run", "--out", outDir}, &handoffOut, &stderr)
+	if code != 0 {
+		t.Fatalf("handoff import failed with %d: %s", code, stderr.String())
+	}
+	if handoffOut.String() != "import ok\n" {
+		t.Fatalf("unexpected import output: %q", handoffOut.String())
+	}
+}
+
 func mockOCIContext(t *testing.T, responses map[string]string) func() {
 	t.Helper()
 	previous := runCommand
@@ -402,6 +544,14 @@ func mockOCIContext(t *testing.T, responses map[string]string) func() {
 		}
 		return nil, errors.New("unexpected args: " + key)
 	}
+	return func() {
+		runCommand = previous
+	}
+}
+
+func mockRunner(runner commandRunner) func() {
+	previous := runCommand
+	runCommand = runner
 	return func() {
 		runCommand = previous
 	}

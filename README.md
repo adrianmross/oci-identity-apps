@@ -67,6 +67,12 @@ Explicit flags always win. Use `--oci-context=false` to disable this defaulting,
 `--oci-context-bin` when testing another binary, and `--oci-context-service`
 when a generic service should read issuer/scope from a named token service.
 
+Inspect the resolved defaults before planning:
+
+```bash
+oci-idm defaults --service obp --format text
+```
+
 For OBP after selecting your OCI context and importing an `oci-context` token
 service, the shortest planning command is:
 
@@ -146,6 +152,13 @@ The output directory contains:
 - `oci-context-token-services.yml`
 - `oci-context-token-commands.sh`
 
+Run a local readiness report over the current `oci-context` defaults and a
+plan:
+
+```bash
+oci-idm doctor --plan idm-plan.json --format text
+```
+
 ## oci-context Handoff
 
 Preview the token-service handoff without materializing files:
@@ -159,6 +172,17 @@ oci-idm handoff \
 
 Merge the generated `token_services` entries into a global or project
 `oci-context` config, then validate with `oci-context auth token`.
+
+To let `oci-idm` materialize the handoff file and import it directly:
+
+```bash
+oci-idm handoff \
+  --plan idm-plan.json \
+  --import \
+  --out ./idm-artifacts
+```
+
+Use `--dry-run` to preview the `oci-context auth service import` result.
 
 For a planned OBP authorization-code app:
 
@@ -268,15 +292,34 @@ grants for the OBP `ADMIN` and `REST_CLIENT` app roles.
 
 ## Apply Model
 
-`apply` is still a dry-run convenience wrapper around materialization:
+By default, `apply` remains a dry-run convenience wrapper around
+materialization:
 
 ```bash
 oci-idm apply --plan idm-plan.json --out ./idm-artifacts
 ```
 
-It refuses `--execute`. Review payloads, replace placeholders such as
-`<created-app-id>` and `<principal-user-id-for-...>`, then run the generated
-scripts yourself.
+For reviewed plans, `apply --execute --confirm` can run the OCI Identity
+Domains changes directly. The executor is intentionally conservative:
+
+- it searches for existing apps by name before creating them
+- it searches for existing same-name principal users before creating them
+- it resolves created or reused app/user ids before creating grants
+- it searches for existing matching grants before creating new grants
+- it fails closed when generated payloads still contain placeholders
+
+```bash
+oci-idm apply \
+  --plan idm-plan.json \
+  --out ./idm-apply \
+  --execute \
+  --confirm \
+  --format text
+```
+
+JWT service plans still need real certificate material before direct execution.
+Materialize first, replace placeholders such as
+`<x509-base64-der-certificate>` and preset role ids, then rerun direct apply.
 
 ## Compatibility
 

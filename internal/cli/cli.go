@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/adrianmross/oci-identity-apps/internal/applyexec"
 	"github.com/adrianmross/oci-identity-apps/internal/diagnose"
 	"github.com/adrianmross/oci-identity-apps/internal/discovery"
+	"github.com/adrianmross/oci-identity-apps/internal/doctor"
 	"github.com/adrianmross/oci-identity-apps/internal/handoff"
 	"github.com/adrianmross/oci-identity-apps/internal/materialize"
 	"github.com/adrianmross/oci-identity-apps/internal/planner"
@@ -48,6 +51,12 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 			return 1
 		}
 		return 0
+	case "defaults", "context":
+		if err := runDefaults(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "discover":
 		if err := runDiscover(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -78,6 +87,12 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 			return 1
 		}
 		return 0
+	case "doctor":
+		if err := runDoctor(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "handoff":
 		if err := runHandoff(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -88,6 +103,23 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		return 1
 	}
+}
+
+func runDefaults(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("defaults", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	service := flags.String("service", string(planner.ServiceOBP), "service preset used for token-service defaults")
+	ociContextService := flags.String("oci-context-service", "", "oci-context token service name; defaults from --service")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
+	format := flags.String("format", "json", "output format: json or text")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	defaults := resolvedDoctorDefaults(*ociContextBin, *service, *ociContextService)
+	return printDefaults(stdout, defaults, *format)
 }
 
 func versionString() string {
@@ -240,17 +272,30 @@ func runApply(args []string, stdout io.Writer) error {
 	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-identity-apps plan")
 	outDir := flags.String("out", "", "directory for generated apply artifacts")
 	execute := flags.Bool("execute", false, "execute OCI changes directly")
+	confirm := flags.Bool("confirm", false, "required with --execute")
+	format := flags.String("format", "text", "output format: text or json")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
-	if *execute {
-		return fmt.Errorf("--execute is intentionally not implemented; run materialize, review payloads, then run apply.sh explicitly")
-	}
 	if strings.TrimSpace(*planPath) == "" {
 		return fmt.Errorf("--plan is required")
+	}
+	if *execute {
+		if !*confirm {
+			return fmt.Errorf("--execute requires --confirm")
+		}
+		plan, err := readPlanFile(*planPath)
+		if err != nil {
+			return err
+		}
+		result, err := applyexec.Execute(plan, *outDir, applyexec.Runner(runCommand))
+		if err != nil {
+			return err
+		}
+		return printApplyResult(stdout, result, *format)
 	}
 	result, err := materialize.FromPlanFile(*planPath, *outDir)
 	if err != nil {
@@ -479,12 +524,44 @@ func runValidate(args []string, stdout io.Writer) error {
 	}
 }
 
+func runDoctor(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	planPath := flags.String("plan", "", "optional JSON plan emitted by oci-idm plan")
+	service := flags.String("service", string(planner.ServiceOBP), "service preset used for token-service defaults")
+	ociContextService := flags.String("oci-context-service", "", "oci-context token service name; defaults from --service")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
+	format := flags.String("format", "json", "output format: json or text")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	defaults := resolvedDoctorDefaults(*ociContextBin, *service, *ociContextService)
+	var report doctor.Report
+	var err error
+	if strings.TrimSpace(*planPath) != "" {
+		report, err = doctor.FromPlanFile(*planPath, defaults)
+	} else {
+		report = doctor.FromDefaults(defaults)
+	}
+	if err != nil {
+		return err
+	}
+	return printDoctorReport(stdout, report, *format)
+}
+
 func runHandoff(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("handoff", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-idm plan")
 	target := flags.String("target", "oci-context", "handoff target: oci-context")
 	format := flags.String("format", "json", "output format for --target oci-context: json, yaml, or commands")
+	importToOCIContext := flags.Bool("import", false, "import generated token services into oci-context")
+	importDryRun := flags.Bool("dry-run", false, "preview oci-context import changes without writing config")
+	outDir := flags.String("out", "", "directory for generated handoff artifacts when using --import")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for --import")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -496,6 +573,23 @@ func runHandoff(args []string, stdout io.Writer) error {
 	}
 	if strings.ToLower(strings.TrimSpace(*target)) != "oci-context" {
 		return fmt.Errorf("unsupported handoff target %q", *target)
+	}
+	if *importToOCIContext {
+		result, err := materialize.FromPlanFile(*planPath, *outDir)
+		if err != nil {
+			return err
+		}
+		file := filepath.Join(result.OutDir, "oci-context-token-services.yml")
+		args := []string{"auth", "service", "import", "--file", file}
+		if *importDryRun {
+			args = append(args, "--dry-run")
+		}
+		out, err := runCommand(*ociContextBin, args...)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(stdout, string(out))
+		return nil
 	}
 	plan, err := readPlanFile(*planPath)
 	if err != nil {
@@ -539,10 +633,14 @@ func writeRootHelp(stdout io.Writer, program string) {
 Usage:
   %s plan [options]
   %s discover [options]
+  %s defaults [options]
   %s diagnose [options]
+  %s doctor [--plan plan.json]
   %s materialize --plan plan.json --out ./idcs-artifacts
   %s handoff --plan plan.json --target oci-context --format yaml
+  %s handoff --plan plan.json --import --out ./idcs-artifacts
   %s apply --plan plan.json --out ./idcs-artifacts
+  %s apply --plan plan.json --execute --confirm
   %s validate --plan plan.json
   %s version
 
@@ -563,7 +661,7 @@ Plan options:
   --oci-context-service obp
     token service name for issuer/scope defaults
   --format json|text
-`, program, program, program, program, program, program, program, program, program)
+`, program, program, program, program, program, program, program, program, program, program, program, program, program)
 }
 
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {
@@ -619,4 +717,84 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func resolvedDoctorDefaults(bin string, service string, serviceOverride string) doctor.Defaults {
+	serviceName := firstNonEmpty(serviceOverride, defaultOCIContextServiceName(service), service)
+	defaults := loadOCIContextDefaults(bin, serviceName)
+	return doctor.Defaults{
+		ContextName:   defaults.ContextName,
+		Profile:       defaults.Profile,
+		Region:        defaults.Region,
+		OCIConfigPath: defaults.OCIConfigPath,
+		ServiceName:   serviceName,
+		Issuer:        defaults.Issuer,
+		Scope:         defaults.Scope,
+	}
+}
+
+func printDefaults(stdout io.Writer, defaults doctor.Defaults, format string) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(defaults)
+	case "text":
+		fmt.Fprintf(stdout, "context: %s\n", defaults.ContextName)
+		fmt.Fprintf(stdout, "profile: %s\n", defaults.Profile)
+		fmt.Fprintf(stdout, "region: %s\n", defaults.Region)
+		fmt.Fprintf(stdout, "ociConfigPath: %s\n", defaults.OCIConfigPath)
+		fmt.Fprintf(stdout, "service: %s\n", defaults.ServiceName)
+		fmt.Fprintf(stdout, "issuer: %s\n", defaults.Issuer)
+		fmt.Fprintf(stdout, "scope: %s\n", defaults.Scope)
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q", format)
+	}
+}
+
+func printDoctorReport(stdout io.Writer, report doctor.Report, format string) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
+	case "text":
+		for _, check := range report.Checks {
+			fmt.Fprintf(stdout, "%s: %s", check.Status, check.Key)
+			if check.Message != "" {
+				fmt.Fprintf(stdout, " - %s", check.Message)
+			}
+			fmt.Fprintln(stdout)
+		}
+		for _, command := range report.Commands {
+			fmt.Fprintf(stdout, "manual: %s\n  %s\n", command.Key, command.Command)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q", format)
+	}
+}
+
+func printApplyResult(stdout io.Writer, result applyexec.Result, format string) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(result)
+	case "text":
+		for _, step := range result.Steps {
+			fmt.Fprintf(stdout, "%s: %s", step.Status, step.Key)
+			if step.ID != "" {
+				fmt.Fprintf(stdout, " id=%s", step.ID)
+			}
+			if step.Message != "" {
+				fmt.Fprintf(stdout, " - %s", step.Message)
+			}
+			fmt.Fprintln(stdout)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported format %q", format)
+	}
 }
