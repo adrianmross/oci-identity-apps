@@ -154,6 +154,14 @@ func OChainEnv(value OCIContext, serviceName string) (string, error) {
 	return b.String(), nil
 }
 
+func OChainDotenv(value OCIContext, serviceName string) (string, error) {
+	ochain, err := ForOChain(value, serviceName)
+	if err != nil {
+		return "", err
+	}
+	return "OCHAIN_TOKEN_COMMAND=" + dotenvQuote(ochain.TokenCommand) + "\n", nil
+}
+
 func selectTokenService(value OCIContext, serviceName string) (TokenService, error) {
 	serviceName = strings.TrimSpace(serviceName)
 	if serviceName != "" {
@@ -331,4 +339,12 @@ func yamlQuote(value string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func dotenvQuote(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	value = strings.ReplaceAll(value, `$`, `\$`)
+	value = strings.ReplaceAll(value, "`", "\\`")
+	return `"` + value + `"`
 }

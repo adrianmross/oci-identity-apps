@@ -46,8 +46,25 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 	case "version", "-v", "--version":
 		fmt.Fprintln(stdout, versionString())
 		return 0
+	case "get":
+		if err := runGet(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "describe":
+		if err := runDescribe(args[1:], stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "plan":
-		if err := runPlan(args[1:], stdout); err != nil {
+		commandArgs, err := stripResourceArg(args[1:], "app", "apps", "identity-app", "identity-apps")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runPlan(commandArgs, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -65,31 +82,56 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 		}
 		return 0
 	case "diagnose":
-		if err := runDiagnose(args[1:], stdout); err != nil {
+		commandArgs, err := stripResourceArg(args[1:], "app", "apps", "service-app", "service-apps", "identity-app", "identity-apps")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runDiagnose(commandArgs, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return 0
 	case "materialize":
-		if err := runMaterialize(args[1:], stdout); err != nil {
+		commandArgs, err := stripResourceArg(args[1:], "plan", "plans")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runMaterialize(commandArgs, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return 0
 	case "apply":
-		if err := runApply(args[1:], stdout); err != nil {
+		commandArgs, err := stripResourceArg(args[1:], "plan", "plans")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runApply(commandArgs, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return 0
 	case "validate":
-		if err := runValidate(args[1:], stdout); err != nil {
+		commandArgs, err := stripResourceArg(args[1:], "plan", "plans")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runValidate(commandArgs, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return 0
 	case "doctor":
-		if err := runDoctor(args[1:], stdout); err != nil {
+		commandArgs, err := stripResourceArg(args[1:], "plan", "plans", "context", "contexts")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runDoctor(commandArgs, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -106,13 +148,57 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 	}
 }
 
+func runGet(args []string, stdout io.Writer) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("get requires a resource: defaults, context, service-apps, or apps")
+	}
+	resource := strings.ToLower(strings.TrimSpace(args[0]))
+	commandArgs := args[1:]
+	switch resource {
+	case "defaults", "default", "context", "contexts":
+		return runDefaults(commandArgs, stdout)
+	case "app", "apps", "service-app", "service-apps", "resource-app", "resource-apps", "identity-app", "identity-apps":
+		return runDiscover(commandArgs, stdout)
+	default:
+		return fmt.Errorf("unsupported get resource %q", args[0])
+	}
+}
+
+func runDescribe(args []string, stdout io.Writer) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("describe requires a resource: service-app or app")
+	}
+	resource := strings.ToLower(strings.TrimSpace(args[0]))
+	commandArgs := args[1:]
+	switch resource {
+	case "app", "apps", "service-app", "service-apps", "resource-app", "resource-apps", "identity-app", "identity-apps":
+		return runDiscover(commandArgs, stdout)
+	default:
+		return fmt.Errorf("unsupported describe resource %q", args[0])
+	}
+}
+
+func stripResourceArg(args []string, allowed ...string) ([]string, error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return args, nil
+	}
+	resource := strings.ToLower(strings.TrimSpace(args[0]))
+	for _, value := range allowed {
+		if resource == value {
+			return args[1:], nil
+		}
+	}
+	return nil, fmt.Errorf("unsupported resource %q", args[0])
+}
+
 func runDefaults(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("defaults", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	service := flags.String("service", string(planner.ServiceOBP), "service preset used for token-service defaults")
 	ociContextService := flags.String("oci-context-service", "", "oci-context token service name; defaults from --service")
 	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
-	format := flags.String("format", "json", "output format: json or text")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json or text")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -120,7 +206,19 @@ func runDefaults(args []string, stdout io.Writer) error {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
 	defaults := resolvedDoctorDefaults(*ociContextBin, *service, *ociContextService)
-	return printDefaults(stdout, defaults, *format)
+	return printDefaults(stdout, defaults, output)
+}
+
+func addOutputFlags(flags *flag.FlagSet, output *string, defaultValue string, usage string) {
+	flags.StringVar(output, "output", defaultValue, usage)
+	flags.StringVar(output, "o", defaultValue, usage+" (shorthand)")
+	flags.StringVar(output, "format", defaultValue, usage+" (alias)")
+}
+
+func addFileFlags(flags *flag.FlagSet, path *string, usage string) {
+	flags.StringVar(path, "file", "", usage)
+	flags.StringVar(path, "f", "", usage+" (shorthand)")
+	flags.StringVar(path, "plan", "", usage+" (alias)")
 }
 
 func versionString() string {
@@ -167,7 +265,9 @@ func runPlan(args []string, stdout io.Writer) error {
 	useOCIContext := flags.Bool("oci-context", true, "read current oci-context and token-service defaults for omitted values")
 	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
 	ociContextService := flags.String("oci-context-service", "", "oci-context token service used for issuer/scope defaults; defaults to --service for non-generic services")
-	format := flags.String("format", "json", "output format: json or text")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json, text, oci-context-yaml, oci-context-json, commands, ochain-env, ochain-dotenv, or ochain-json")
+	tokenService := flags.String("token-service", "", "token service name for OChain output")
 
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -254,7 +354,12 @@ func runPlan(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	switch strings.ToLower(strings.TrimSpace(*format)) {
+	return printPlanOutput(stdout, plan, output, *tokenService)
+}
+
+func printPlanOutput(stdout io.Writer, plan planner.Plan, output string, tokenService string) error {
+	ociContext := handoff.ForOCIContext(plan)
+	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "json":
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -262,33 +367,69 @@ func runPlan(args []string, stdout io.Writer) error {
 	case "text":
 		writeTextPlan(stdout, plan)
 		return nil
+	case "oci-context-json", "context-json":
+		data, err := handoff.JSON(ociContext)
+		if err != nil {
+			return err
+		}
+		_, err = stdout.Write(data)
+		return err
+	case "oci-context-yaml", "token-services-yaml":
+		fmt.Fprint(stdout, handoff.TokenServicesYAML(ociContext))
+		return nil
+	case "oci-context-commands", "commands", "sh", "shell":
+		fmt.Fprint(stdout, handoff.TokenCommandsScript(ociContext))
+		return nil
+	case "ochain-env":
+		env, err := handoff.OChainEnv(ociContext, tokenService)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(stdout, env)
+		return nil
+	case "ochain-dotenv":
+		env, err := handoff.OChainDotenv(ociContext, tokenService)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(stdout, env)
+		return nil
+	case "ochain-json":
+		data, err := handoff.OChainJSON(ociContext, tokenService)
+		if err != nil {
+			return err
+		}
+		_, err = stdout.Write(data)
+		return err
 	default:
-		return fmt.Errorf("unsupported format %q", *format)
+		return fmt.Errorf("unsupported output %q", output)
 	}
 }
 
 func runApply(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-identity-apps plan")
+	var planPath string
+	addFileFlags(flags, &planPath, "path to a JSON plan emitted by oci-idm plan, or - for stdin")
 	outDir := flags.String("out", "", "directory for generated apply artifacts")
 	execute := flags.Bool("execute", false, "execute OCI changes directly")
 	confirm := flags.Bool("confirm", false, "required with --execute")
-	format := flags.String("format", "text", "output format: text or json")
+	var output string
+	addOutputFlags(flags, &output, "text", "output format: text or json")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
-	if strings.TrimSpace(*planPath) == "" {
-		return fmt.Errorf("--plan is required")
+	if strings.TrimSpace(planPath) == "" {
+		return fmt.Errorf("-f/--file is required")
 	}
 	if *execute {
 		if !*confirm {
 			return fmt.Errorf("--execute requires --confirm")
 		}
-		plan, err := readPlanFile(*planPath)
+		plan, err := readPlanFile(planPath)
 		if err != nil {
 			return err
 		}
@@ -296,9 +437,9 @@ func runApply(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return printApplyResult(stdout, result, *format)
+		return printApplyResult(stdout, result, output)
 	}
-	result, err := materialize.FromPlanFile(*planPath, *outDir)
+	result, err := materialize.FromPlanFile(planPath, *outDir)
 	if err != nil {
 		return err
 	}
@@ -320,7 +461,8 @@ func runDiscover(args []string, stdout io.Writer) error {
 	useOCIContext := flags.Bool("oci-context", true, "read current oci-context defaults for omitted values")
 	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
 	ociContextService := flags.String("oci-context-service", string(planner.ServiceOBP), "oci-context token service used for issuer defaults")
-	format := flags.String("format", "json", "output format: json or text")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json or text")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -355,7 +497,7 @@ func runDiscover(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	switch strings.ToLower(strings.TrimSpace(*format)) {
+	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "json":
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -367,7 +509,7 @@ func runDiscover(args []string, stdout io.Writer) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported format %q", *format)
+		return fmt.Errorf("unsupported output %q", output)
 	}
 }
 
@@ -386,7 +528,8 @@ func runDiagnose(args []string, stdout io.Writer) error {
 	useOCIContext := flags.Bool("oci-context", true, "read current oci-context and token-service defaults for omitted values")
 	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
 	ociContextService := flags.String("oci-context-service", "", "oci-context token service used for issuer defaults; defaults to --service for non-generic services")
-	format := flags.String("format", "json", "output format: json or text")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json or text")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -424,7 +567,7 @@ func runDiagnose(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	switch strings.ToLower(strings.TrimSpace(*format)) {
+	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "json":
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -446,30 +589,32 @@ func runDiagnose(args []string, stdout io.Writer) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported format %q", *format)
+		return fmt.Errorf("unsupported output %q", output)
 	}
 }
 
 func runMaterialize(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("materialize", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-identity-apps plan")
+	var planPath string
+	addFileFlags(flags, &planPath, "path to a JSON plan emitted by oci-idm plan")
 	outDir := flags.String("out", "", "directory for payload JSON files and helper scripts")
-	format := flags.String("format", "text", "output format: text or json")
+	var output string
+	addOutputFlags(flags, &output, "text", "output format: text or json")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
-	if strings.TrimSpace(*planPath) == "" {
-		return fmt.Errorf("--plan is required")
+	if strings.TrimSpace(planPath) == "" {
+		return fmt.Errorf("-f/--file is required")
 	}
-	result, err := materialize.FromPlanFile(*planPath, *outDir)
+	result, err := materialize.FromPlanFile(planPath, *outDir)
 	if err != nil {
 		return err
 	}
-	switch strings.ToLower(strings.TrimSpace(*format)) {
+	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "json":
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -481,29 +626,31 @@ func runMaterialize(args []string, stdout io.Writer) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported format %q", *format)
+		return fmt.Errorf("unsupported output %q", output)
 	}
 }
 
 func runValidate(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-identity-apps plan")
-	format := flags.String("format", "json", "output format: json or text")
+	var planPath string
+	addFileFlags(flags, &planPath, "path to a JSON plan emitted by oci-idm plan")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json or text")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
-	if strings.TrimSpace(*planPath) == "" {
-		return fmt.Errorf("--plan is required")
+	if strings.TrimSpace(planPath) == "" {
+		return fmt.Errorf("-f/--file is required")
 	}
-	report, err := validation.FromPlanFile(*planPath)
+	report, err := validation.FromPlanFile(planPath)
 	if err != nil {
 		return err
 	}
-	switch strings.ToLower(strings.TrimSpace(*format)) {
+	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "json":
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -521,18 +668,20 @@ func runValidate(args []string, stdout io.Writer) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported format %q", *format)
+		return fmt.Errorf("unsupported output %q", output)
 	}
 }
 
 func runDoctor(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	planPath := flags.String("plan", "", "optional JSON plan emitted by oci-idm plan")
+	var planPath string
+	addFileFlags(flags, &planPath, "optional JSON plan emitted by oci-idm plan, or - for stdin")
 	service := flags.String("service", string(planner.ServiceOBP), "service preset used for token-service defaults")
 	ociContextService := flags.String("oci-context-service", "", "oci-context token service name; defaults from --service")
 	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
-	format := flags.String("format", "json", "output format: json or text")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json or text")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -542,23 +691,25 @@ func runDoctor(args []string, stdout io.Writer) error {
 	defaults := resolvedDoctorDefaults(*ociContextBin, *service, *ociContextService)
 	var report doctor.Report
 	var err error
-	if strings.TrimSpace(*planPath) != "" {
-		report, err = doctor.FromPlanFile(*planPath, defaults)
+	if strings.TrimSpace(planPath) != "" {
+		report, err = doctor.FromPlanFile(planPath, defaults)
 	} else {
 		report = doctor.FromDefaults(defaults)
 	}
 	if err != nil {
 		return err
 	}
-	return printDoctorReport(stdout, report, *format)
+	return printDoctorReport(stdout, report, output)
 }
 
 func runHandoff(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("handoff", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	planPath := flags.String("plan", "", "path to a JSON plan emitted by oci-idm plan")
-	target := flags.String("target", "oci-context", "handoff target: oci-context")
-	format := flags.String("format", "json", "output format for --target oci-context: json, yaml, commands, ochain-env, or ochain-json")
+	var planPath string
+	addFileFlags(flags, &planPath, "path to a JSON plan emitted by oci-idm plan, or - for stdin")
+	target := flags.String("target", "oci-context", "handoff target: oci-context or ochain")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json, yaml, commands, env, or dotenv")
 	importToOCIContext := flags.Bool("import", false, "import generated token services into oci-context")
 	importDryRun := flags.Bool("dry-run", false, "preview oci-context import changes without writing config")
 	outDir := flags.String("out", "", "directory for generated handoff artifacts when using --import")
@@ -570,14 +721,22 @@ func runHandoff(args []string, stdout io.Writer) error {
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
-	if strings.TrimSpace(*planPath) == "" {
-		return fmt.Errorf("--plan is required")
+	if strings.TrimSpace(planPath) == "" {
+		return fmt.Errorf("-f/--file is required")
 	}
-	if strings.ToLower(strings.TrimSpace(*target)) != "oci-context" {
+	normalizedTarget := strings.ToLower(strings.TrimSpace(*target))
+	normalizedOutput := strings.ToLower(strings.TrimSpace(output))
+	if normalizedTarget == "oci-context" && strings.HasPrefix(normalizedOutput, "ochain") {
+		normalizedTarget = "ochain"
+	}
+	if normalizedTarget != "oci-context" && normalizedTarget != "ochain" {
 		return fmt.Errorf("unsupported handoff target %q", *target)
 	}
 	if *importToOCIContext {
-		result, err := materialize.FromPlanFile(*planPath, *outDir)
+		if normalizedTarget != "oci-context" {
+			return fmt.Errorf("--import only supports --target oci-context")
+		}
+		result, err := materialize.FromPlanFile(planPath, *outDir)
 		if err != nil {
 			return err
 		}
@@ -593,12 +752,15 @@ func runHandoff(args []string, stdout io.Writer) error {
 		fmt.Fprint(stdout, string(out))
 		return nil
 	}
-	plan, err := readPlanFile(*planPath)
+	plan, err := readPlanFile(planPath)
 	if err != nil {
 		return err
 	}
 	ociContext := handoff.ForOCIContext(plan)
-	switch strings.ToLower(strings.TrimSpace(*format)) {
+	if normalizedTarget == "ochain" {
+		return printOChainHandoff(stdout, ociContext, normalizedOutput, *tokenService)
+	}
+	switch normalizedOutput {
 	case "json":
 		data, err := handoff.JSON(ociContext)
 		if err != nil {
@@ -612,22 +774,36 @@ func runHandoff(args []string, stdout io.Writer) error {
 	case "commands", "sh", "shell":
 		fmt.Fprint(stdout, handoff.TokenCommandsScript(ociContext))
 		return nil
-	case "ochain-env", "ochain":
-		env, err := handoff.OChainEnv(ociContext, *tokenService)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func printOChainHandoff(stdout io.Writer, value handoff.OCIContext, output string, tokenService string) error {
+	switch output {
+	case "env", "sh", "shell", "export", "exports", "ochain-env", "ochain":
+		env, err := handoff.OChainEnv(value, tokenService)
 		if err != nil {
 			return err
 		}
 		fmt.Fprint(stdout, env)
 		return nil
-	case "ochain-json":
-		data, err := handoff.OChainJSON(ociContext, *tokenService)
+	case "dotenv", "ochain-dotenv":
+		env, err := handoff.OChainDotenv(value, tokenService)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(stdout, env)
+		return nil
+	case "json", "ochain-json":
+		data, err := handoff.OChainJSON(value, tokenService)
 		if err != nil {
 			return err
 		}
 		_, err = stdout.Write(data)
 		return err
 	default:
-		return fmt.Errorf("unsupported format %q", *format)
+		return fmt.Errorf("unsupported output %q for target ochain", output)
 	}
 }
 
@@ -653,18 +829,20 @@ func writeRootHelp(stdout io.Writer, program string) {
 	fmt.Fprintf(stdout, `%s plans OCI Identity Domains apps, grants, and token-helper handoffs.
 
 Usage:
-  %s plan [options]
-  %s discover [options]
-  %s defaults [options]
-  %s diagnose [options]
-  %s doctor [--plan plan.json]
-  %s materialize --plan plan.json --out ./idcs-artifacts
-  %s handoff --plan plan.json --target oci-context --format yaml
-  %s handoff --plan plan.json --format ochain-env
-  %s handoff --plan plan.json --import --out ./idcs-artifacts
-  %s apply --plan plan.json --out ./idcs-artifacts
-  %s apply --plan plan.json --execute --confirm
-  %s validate --plan plan.json
+  %s get defaults [options]
+  %s get service-apps [options]
+  %s describe service-app [options]
+  %s plan apps [options]
+  %s plan apps [options] -o oci-context-yaml
+  %s plan apps [options] -o ochain-env
+  %s diagnose apps [options]
+  %s doctor plan -f plan.json
+  %s materialize plan -f plan.json --out ./idcs-artifacts
+  %s handoff -f plan.json --target oci-context -o yaml
+  %s handoff -f plan.json --import --out ./idcs-artifacts
+  %s apply plan -f plan.json --out ./idcs-artifacts
+  %s apply plan -f plan.json --execute --confirm
+  %s validate plan -f plan.json
   %s version
 
 Plan options:
@@ -683,13 +861,14 @@ Plan options:
     read profile, region, config path, issuer, and scope defaults from current oci-context
   --oci-context-service obp
     token service name for issuer/scope defaults
-  --format json|text
+  -o, --output json|text|oci-context-yaml|oci-context-json|commands|ochain-env|ochain-dotenv|ochain-json
 
 Pipe contracts:
-  plan-consuming commands accept --plan - for stdin
-  handoff --format yaml can pipe into oci-context auth service import --file -
-  handoff --format ochain-env emits OCHAIN_TOKEN_COMMAND
-`, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
+  plan-consuming commands accept -f - for stdin
+  plan apps -o oci-context-yaml can pipe into oci-context auth service import --file -
+  plan apps -o ochain-env emits OCHAIN_TOKEN_COMMAND
+  handoff remains available for saved plan files
+`, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
 }
 
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {
@@ -761,8 +940,8 @@ func resolvedDoctorDefaults(bin string, service string, serviceOverride string) 
 	}
 }
 
-func printDefaults(stdout io.Writer, defaults doctor.Defaults, format string) error {
-	switch strings.ToLower(strings.TrimSpace(format)) {
+func printDefaults(stdout io.Writer, defaults doctor.Defaults, output string) error {
+	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "json":
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -777,12 +956,12 @@ func printDefaults(stdout io.Writer, defaults doctor.Defaults, format string) er
 		fmt.Fprintf(stdout, "scope: %s\n", defaults.Scope)
 		return nil
 	default:
-		return fmt.Errorf("unsupported format %q", format)
+		return fmt.Errorf("unsupported output %q", output)
 	}
 }
 
-func printDoctorReport(stdout io.Writer, report doctor.Report, format string) error {
-	switch strings.ToLower(strings.TrimSpace(format)) {
+func printDoctorReport(stdout io.Writer, report doctor.Report, output string) error {
+	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "json":
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -800,12 +979,12 @@ func printDoctorReport(stdout io.Writer, report doctor.Report, format string) er
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported format %q", format)
+		return fmt.Errorf("unsupported output %q", output)
 	}
 }
 
-func printApplyResult(stdout io.Writer, result applyexec.Result, format string) error {
-	switch strings.ToLower(strings.TrimSpace(format)) {
+func printApplyResult(stdout io.Writer, result applyexec.Result, output string) error {
+	switch strings.ToLower(strings.TrimSpace(output)) {
 	case "json":
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -823,6 +1002,6 @@ func printApplyResult(stdout io.Writer, result applyexec.Result, format string) 
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported format %q", format)
+		return fmt.Errorf("unsupported output %q", output)
 	}
 }
