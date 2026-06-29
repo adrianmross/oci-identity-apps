@@ -1,3 +1,3 @@
-module github.com/adrianmross/oci-identity-apps
+module github.com/adrianmross/oci-idm
 
 go 1.25.6

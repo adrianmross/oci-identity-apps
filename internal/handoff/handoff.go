@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/adrianmross/oci-identity-apps/internal/planner"
+	"github.com/adrianmross/oci-idm/internal/planner"
 )
 
 const SchemaVersion = "oci-idm.handoff.oci-context.v1"

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/adrianmross/oci-identity-apps/internal/handoff"
-	"github.com/adrianmross/oci-identity-apps/internal/planner"
+	"github.com/adrianmross/oci-idm/internal/handoff"
+	"github.com/adrianmross/oci-idm/internal/planner"
 )
 
 type Result struct {

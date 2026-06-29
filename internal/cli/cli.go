@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/adrianmross/oci-identity-apps/internal/applyexec"
-	"github.com/adrianmross/oci-identity-apps/internal/diagnose"
-	"github.com/adrianmross/oci-identity-apps/internal/discovery"
-	"github.com/adrianmross/oci-identity-apps/internal/doctor"
-	"github.com/adrianmross/oci-identity-apps/internal/handoff"
-	"github.com/adrianmross/oci-identity-apps/internal/materialize"
-	"github.com/adrianmross/oci-identity-apps/internal/planner"
-	"github.com/adrianmross/oci-identity-apps/internal/validation"
+	"github.com/adrianmross/oci-idm/internal/applyexec"
+	"github.com/adrianmross/oci-idm/internal/diagnose"
+	"github.com/adrianmross/oci-idm/internal/discovery"
+	"github.com/adrianmross/oci-idm/internal/doctor"
+	"github.com/adrianmross/oci-idm/internal/handoff"
+	"github.com/adrianmross/oci-idm/internal/materialize"
+	"github.com/adrianmross/oci-idm/internal/planner"
+	"github.com/adrianmross/oci-idm/internal/validation"
 )
 
 var (
