@@ -79,6 +79,8 @@ type Options struct {
 	OCIProfile           string
 	OCIConfigPath        string
 	OCIRegion            string
+	TokenServiceName     string
+	AppNames             map[AppKind]string
 }
 
 type Plan struct {
@@ -109,6 +111,7 @@ type Target struct {
 	OCIProfile           string             `json:"ociProfile,omitempty"`
 	OCIConfigPath        string             `json:"ociConfigPath,omitempty"`
 	OCIRegion            string             `json:"ociRegion,omitempty"`
+	TokenServiceName     string             `json:"tokenServiceName,omitempty"`
 }
 
 type BaseCloudServiceApp struct {
@@ -326,6 +329,7 @@ func Build(options Options) (Plan, error) {
 		ociProfile:           strings.TrimSpace(options.OCIProfile),
 		ociConfigPath:        strings.TrimSpace(options.OCIConfigPath),
 		ociRegion:            strings.TrimSpace(options.OCIRegion),
+		appNames:             options.AppNames,
 	}
 
 	apps := make([]AppPlan, 0, len(includes))
@@ -379,6 +383,7 @@ func Build(options Options) (Plan, error) {
 			OCIProfile:           strings.TrimSpace(options.OCIProfile),
 			OCIConfigPath:        strings.TrimSpace(options.OCIConfigPath),
 			OCIRegion:            strings.TrimSpace(options.OCIRegion),
+			TokenServiceName:     strings.TrimSpace(options.TokenServiceName),
 		},
 		BaseCloudServiceApp: baseCloudServiceApp(service, options),
 		Apps:                apps,
@@ -599,6 +604,7 @@ type buildContext struct {
 	ociProfile           string
 	ociConfigPath        string
 	ociRegion            string
+	appNames             map[AppKind]string
 }
 
 func buildApp(kind AppKind, ctx buildContext) AppPlan {
@@ -606,7 +612,7 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 	case AppUser:
 		return appPlan(appInput{
 			kind:               AppUser,
-			name:               ctx.prefix + "-cli-user",
+			name:               appName(ctx, AppUser, ctx.prefix+"-cli-user"),
 			displayName:        title(ctx.prefix) + " CLI User Auth",
 			purpose:            "MFA-capable local human authorization-code flow for a CLI token helper.",
 			clientType:         ctx.userClientType,
@@ -632,7 +638,7 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 	case AppService:
 		return appPlan(appInput{
 			kind:                 AppService,
-			name:                 ctx.prefix + "-service",
+			name:                 appName(ctx, AppService, ctx.prefix+"-service"),
 			displayName:          title(ctx.prefix) + " Service Client",
 			purpose:              "Confidential OAuth client for non-human client-credentials automation.",
 			clientType:           ClientConfidential,
@@ -660,7 +666,7 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 	case AppJWTService:
 		return appPlan(appInput{
 			kind:                 AppJWTService,
-			name:                 ctx.prefix + "-service-jwt",
+			name:                 appName(ctx, AppJWTService, ctx.prefix+"-service-jwt"),
 			displayName:          title(ctx.prefix) + " Service JWT Client",
 			purpose:              "Confidential OAuth client for service-account client credentials with JWT client assertion authentication.",
 			clientType:           ClientConfidential,
@@ -692,7 +698,7 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 	case AppJWTUser:
 		return appPlan(appInput{
 			kind:          AppJWTUser,
-			name:          ctx.prefix + "-user-jwt",
+			name:          appName(ctx, AppJWTUser, ctx.prefix+"-user-jwt"),
 			displayName:   title(ctx.prefix) + " User JWT Bearer",
 			purpose:       "Confidential OAuth client for trusted JWT bearer assertions that represent a user or mapped subject.",
 			clientType:    ClientConfidential,
@@ -719,7 +725,7 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 	case AppWorkload:
 		return appPlan(appInput{
 			kind:          AppWorkload,
-			name:          ctx.prefix + "-workload-federation",
+			name:          appName(ctx, AppWorkload, ctx.prefix+"-workload-federation"),
 			displayName:   title(ctx.prefix) + " Workload Federation",
 			purpose:       "Confidential OAuth client for exchanging trusted workload identity tokens for service access tokens.",
 			clientType:    ClientConfidential,
@@ -746,6 +752,15 @@ func buildApp(kind AppKind, ctx buildContext) AppPlan {
 	default:
 		return AppPlan{}
 	}
+}
+
+func appName(ctx buildContext, kind AppKind, fallback string) string {
+	if ctx.appNames != nil {
+		if name := strings.TrimSpace(ctx.appNames[kind]); name != "" {
+			return name
+		}
+	}
+	return fallback
 }
 
 type appInput struct {

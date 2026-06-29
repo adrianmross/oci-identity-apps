@@ -58,21 +58,22 @@ available on `PATH`.
 By default, `oci-idm` reads the current `oci-context` for OCI CLI defaults:
 
 - `oci-context export -f json` supplies the current context name, profile, and
-  region.
+  region, plus `current_service` when one is selected.
 - `oci-context paths -o json` supplies the OCI config file path.
 - `oci-context auth service list -o json` supplies OAuth issuer and scope
-  defaults when a matching token service exists, such as `obp`.
+  defaults when a matching token service exists.
 
 Explicit flags always win. Use `--oci-context=false` to disable this defaulting,
 `--oci-context-bin` when testing another binary, and `--oci-context-service`
-when a generic service should read issuer/scope from a named token service.
+when a command should read issuer/scope from a named token service instead of
+the current `oci-context` auth target.
 Commands with structured output accept `-o` or `--output`; `--format` remains
 available as a compatibility alias.
 Commands that read a plan accept `-f` or `--file`; `--plan` remains available
 as a compatibility alias.
 The preferred command shape is `oci-idm <verb> <resource> [flags]`, similar to
-`kubectl`: `get defaults`, `get service-apps`, `plan apps`, `doctor plan`,
-`materialize plan`, `apply plan`, and `validate plan`.
+`kubectl`: `get defaults`, `get service-apps`, `clone app`, `plan apps`,
+`doctor plan`, `materialize plan`, `apply plan`, and `validate plan`.
 
 Inspect the resolved defaults before planning:
 
@@ -179,12 +180,53 @@ oci-idm plan apps --service obp --resource-app-id example-resource-app-id |
 For day-to-day shell use, prefer emitting the needed projection directly from
 `plan` and piping it to the next tool.
 
+Create or select a CLI-capable auth target from the current `oci-context`
+service and make it current for later `oci-context` commands:
+
+```bash
+oci-context use oabcs1
+
+oci-idm clone app --flow authorization-code --name hebe-obp-user |
+  oci-context service add --set-current
+
+oci-context auth login
+oci-context auth token --no-login --format raw
+```
+
+`clone app` emits a standard `oci-context` handoff document by default. It does
+not print secrets. Use the existing `plan apps`, `materialize plan`, and
+`apply plan --execute --confirm` path when you need reviewable payload files and
+live Identity Domains creation.
+
+Login to the current OBP target through `oci-context`:
+
+```bash
+oci-idm get defaults --service obp |
+  oci-context auth login
+
+oci-context auth token --service obp --no-login --format raw
+```
+
+`get defaults` emits the current `oci-context` name, OCI profile, region,
+token-service name, issuer, and scope. `oci-context auth login` consumes that
+target metadata, merges the non-secret service values into the matching token
+service, and runs the interactive Authorization Code or Device Code login
+configured for that service.
+
+After that metadata is in an `oci-context` file with `current_service` set, the
+short form is enough:
+
+```bash
+oci-context auth login
+oci-context auth token --no-login --format raw
+```
+
 Import generated `oci-context` token services:
 
 ```bash
 oci-idm plan apps --service obp --resource-app-id example-resource-app-id \
   -o oci-context-yaml |
-  oci-context auth service import --file -
+  oci-context service add --set-current
 ```
 
 Merge the generated `token_services` entries into a global or project
@@ -221,11 +263,8 @@ oci-idm handoff -f idm-plan.json --target oci-context -o yaml
 For a planned OBP authorization-code app:
 
 ```bash
-oci-context auth token \
-  --service obp \
-  --flow authorization-code \
-  --redirect-url http://127.0.0.1:8180/callback \
-  --format raw
+oci-idm get defaults --service obp |
+  oci-context auth login
 ```
 
 For a planned OBP JWT service app:

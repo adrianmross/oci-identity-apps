@@ -17,14 +17,17 @@ type ociContextDefaults struct {
 	Profile       string
 	Region        string
 	OCIConfigPath string
+	ServiceName   string
 	Issuer        string
 	Scope         string
 }
 
 type ociContextExport struct {
-	Name    string `json:"name"`
-	Profile string `json:"profile"`
-	Region  string `json:"region"`
+	Name                string `json:"name"`
+	Profile             string `json:"profile"`
+	Region              string `json:"region"`
+	CurrentService      string `json:"current_service"`
+	CamelCurrentService string `json:"currentService"`
 }
 
 type ociContextPaths struct {
@@ -49,6 +52,7 @@ func loadOCIContextDefaults(bin string, serviceName string) ociContextDefaults {
 			defaults.ContextName = strings.TrimSpace(current.Name)
 			defaults.Profile = strings.TrimSpace(current.Profile)
 			defaults.Region = strings.TrimSpace(current.Region)
+			defaults.ServiceName = firstNonEmpty(current.CurrentService, current.CamelCurrentService)
 		}
 	}
 	if data, err := runCommand(bin, "paths", "-o", "json"); err == nil {
@@ -58,6 +62,10 @@ func loadOCIContextDefaults(bin string, serviceName string) ociContextDefaults {
 		}
 	}
 	serviceName = strings.TrimSpace(serviceName)
+	if serviceName == "" {
+		serviceName = defaults.ServiceName
+	}
+	defaults.ServiceName = serviceName
 	if serviceName != "" {
 		if data, err := runCommand(bin, "auth", "service", "list", "-o", "json"); err == nil {
 			var services []ociContextTokenService

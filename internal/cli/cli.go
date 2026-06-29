@@ -69,6 +69,17 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 			return 1
 		}
 		return 0
+	case "clone":
+		commandArgs, err := stripResourceArg(args[1:], "app", "apps", "identity-app", "identity-apps")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runClone(commandArgs, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "defaults", "context":
 		if err := runDefaults(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -194,7 +205,7 @@ func stripResourceArg(args []string, allowed ...string) ([]string, error) {
 func runDefaults(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("defaults", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	service := flags.String("service", string(planner.ServiceOBP), "service preset used for token-service defaults")
+	service := flags.String("service", "", "service preset used for token-service defaults; defaults from current oci-context else obp")
 	ociContextService := flags.String("oci-context-service", "", "oci-context token service name; defaults from --service")
 	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
 	var output string
@@ -236,7 +247,7 @@ func runPlan(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("plan", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
-	service := flags.String("service", string(planner.ServiceGeneric), "service preset: generic or obp")
+	service := flags.String("service", "", "service preset: generic or obp; defaults from current oci-context else generic")
 	platform := flags.String("platform", "", "target service platform URL")
 	issuer := flags.String("issuer", "", "OCI Identity Domains issuer URL")
 	scope := flags.String("scope", "", "OAuth scope; defaults to --platform for --service obp")
@@ -308,6 +319,9 @@ func runPlan(args []string, stdout io.Writer) error {
 		if !explicitFlags(visited, "scope") && strings.TrimSpace(*scope) == "" {
 			*scope = defaults.Scope
 		}
+		if !explicitFlags(visited, "service") && strings.TrimSpace(*service) == "" {
+			*service = string(inferServiceKind(defaults, planner.ServiceGeneric))
+		}
 		if !explicitFlags(visited, "platform") && strings.TrimSpace(*platform) == "" && planner.ServiceKind(*service) == planner.ServiceOBP {
 			*platform = defaults.Scope
 		}
@@ -355,6 +369,162 @@ func runPlan(args []string, stdout io.Writer) error {
 	}
 
 	return printPlanOutput(stdout, plan, output, *tokenService)
+}
+
+func runClone(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("clone", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	flow := flags.String("flow", "authorization-code", "auth flow: authorization-code, client-credentials, jwt-client-credentials, jwt-bearer, or token-exchange")
+	name := flags.String("name", "", "exact Identity Domains app name and oci-context token service name")
+	service := flags.String("service", "", "service preset: generic or obp; defaults from current oci-context when available")
+	platform := flags.String("platform", "", "target service platform URL")
+	issuer := flags.String("issuer", "", "OCI Identity Domains issuer URL")
+	scope := flags.String("scope", "", "OAuth scope; defaults to --platform for OBP")
+	idcsEndpoint := flags.String("idcs-endpoint", "", "OCI Identity Domains base endpoint")
+	resourceAppID := flags.String("resource-app-id", "", "target service/resource app id that defines the requested scope")
+	baseAppName := flags.String("base-app-name", "", "service-created app name to document as source context")
+	baseAppDisplayName := flags.String("base-app-display-name", "", "service-created app display name")
+	redirectURL := flags.String("redirect-url", planner.DefaultCLIRedirectURL, "loopback redirect URL for CLI auth-code flow")
+	userClientType := flags.String("user-client-type", string(planner.ClientPublic), "authorization-code app client type: public or confidential")
+	principalMode := flags.String("principal-mode", string(planner.PrincipalAuto), "service principal mode: auto, none, or same-name-user")
+	principalEmailDomain := flags.String("principal-email-domain", "example.invalid", "email domain for generated same-name principal users")
+	rolePreset := flags.String("role-preset", "none", "comma list of service role presets: none,obp-admin,obp-rest-client,obp-user,obp-ca-user")
+	appRoleGrants := flags.String("app-role-grants", "", "comma list of target service app role grants as NAME=APP_ROLE_ID entries")
+	profile := flags.String("profile", "", "OCI CLI profile for generated Identity Domains commands; defaults from current oci-context")
+	ociConfigPath := flags.String("oci-config-file", "", "OCI CLI config file for generated commands; defaults from current oci-context")
+	region := flags.String("region", "", "OCI region for generated commands; defaults from current oci-context")
+	useOCIContext := flags.Bool("oci-context", true, "read current oci-context and token-service defaults for omitted values")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
+	ociContextService := flags.String("oci-context-service", "", "oci-context token service used for issuer/scope defaults; defaults to current_service")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json, yaml, plan, or text")
+
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	if strings.TrimSpace(*name) == "" {
+		return fmt.Errorf("--name is required")
+	}
+	include, err := includeForFlow(*flow)
+	if err != nil {
+		return err
+	}
+	clientType, err := planner.ParseClientType(*userClientType)
+	if err != nil {
+		return err
+	}
+	parsedPrincipalMode, err := planner.ParsePrincipalMode(*principalMode)
+	if err != nil {
+		return err
+	}
+	grants, err := planner.ParseAppRoleGrants(*appRoleGrants)
+	if err != nil {
+		return err
+	}
+	presets, err := planner.ParseRolePresets(*rolePreset)
+	if err != nil {
+		return err
+	}
+
+	visited := collectVisitedFlags(flags)
+	contextName := ""
+	defaults := ociContextDefaults{}
+	if *useOCIContext {
+		serviceName := firstNonEmpty(*ociContextService, defaultOCIContextServiceName(*service))
+		defaults = loadOCIContextDefaults(*ociContextBin, serviceName)
+		contextName = defaults.ContextName
+		if !explicitFlags(visited, "issuer") && strings.TrimSpace(*issuer) == "" {
+			*issuer = defaults.Issuer
+		}
+		if !explicitFlags(visited, "scope") && strings.TrimSpace(*scope) == "" {
+			*scope = defaults.Scope
+		}
+		if !explicitFlags(visited, "service") && strings.TrimSpace(*service) == "" {
+			*service = string(inferServiceKind(defaults, planner.ServiceGeneric))
+		}
+		if !explicitFlags(visited, "platform") && strings.TrimSpace(*platform) == "" && planner.ServiceKind(*service) == planner.ServiceOBP {
+			*platform = defaults.Scope
+		}
+		if !explicitFlags(visited, "profile") && strings.TrimSpace(*profile) == "" {
+			*profile = defaults.Profile
+		}
+		if !explicitFlags(visited, "oci-config-file") && strings.TrimSpace(*ociConfigPath) == "" {
+			*ociConfigPath = defaults.OCIConfigPath
+		}
+		if !explicitFlags(visited, "region") && strings.TrimSpace(*region) == "" {
+			*region = defaults.Region
+		}
+	}
+	kind := include[0]
+	plan, err := planner.Build(planner.Options{
+		Service:              planner.ServiceKind(*service),
+		Platform:             *platform,
+		Issuer:               *issuer,
+		Scope:                *scope,
+		IDCSEndpoint:         *idcsEndpoint,
+		ResourceAppID:        *resourceAppID,
+		BaseAppName:          *baseAppName,
+		BaseAppDisplayName:   *baseAppDisplayName,
+		RedirectURL:          *redirectURL,
+		Include:              include,
+		UserClientType:       clientType,
+		PrincipalMode:        parsedPrincipalMode,
+		PrincipalEmailDomain: *principalEmailDomain,
+		RolePresets:          presets,
+		AppRoleGrants:        grants,
+		OCIContext:           contextName,
+		OCIProfile:           *profile,
+		OCIConfigPath:        *ociConfigPath,
+		OCIRegion:            *region,
+		TokenServiceName:     *name,
+		AppNames:             map[planner.AppKind]string{kind: *name},
+	})
+	if err != nil {
+		return err
+	}
+	ociContext := handoff.ForOCIContext(plan)
+	switch strings.ToLower(strings.TrimSpace(output)) {
+	case "json", "oci-context-json", "context-json":
+		data, err := handoff.JSON(ociContext)
+		if err != nil {
+			return err
+		}
+		_, err = stdout.Write(data)
+		return err
+	case "yaml", "yml", "oci-context-yaml", "token-services-yaml":
+		fmt.Fprint(stdout, handoff.TokenServicesYAML(ociContext))
+		return nil
+	case "plan":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(plan)
+	case "text":
+		writeTextPlan(stdout, plan)
+		return nil
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func includeForFlow(flow string) ([]planner.AppKind, error) {
+	switch strings.ToLower(strings.TrimSpace(flow)) {
+	case "", "authorization-code", "auth-code", "user":
+		return []planner.AppKind{planner.AppUser}, nil
+	case "client-credentials", "service":
+		return []planner.AppKind{planner.AppService}, nil
+	case "jwt-client-credentials", "jwt-service", "service-jwt":
+		return []planner.AppKind{planner.AppJWTService}, nil
+	case "jwt-bearer", "jwt-user", "user-jwt":
+		return []planner.AppKind{planner.AppJWTUser}, nil
+	case "token-exchange", "workload", "workload-federation":
+		return []planner.AppKind{planner.AppWorkload}, nil
+	default:
+		return nil, fmt.Errorf("unsupported flow %q", flow)
+	}
 }
 
 func printPlanOutput(stdout io.Writer, plan planner.Plan, output string, tokenService string) error {
@@ -516,7 +686,7 @@ func runDiscover(args []string, stdout io.Writer) error {
 func runDiagnose(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("diagnose", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	service := flags.String("service", string(diagnose.ServiceGeneric), "service preset: generic or obp")
+	service := flags.String("service", "", "service preset: generic or obp; defaults from current oci-context else generic")
 	issuer := flags.String("issuer", "", "OCI Identity Domains issuer URL")
 	idcsEndpoint := flags.String("idcs-endpoint", "", "OCI Identity Domains base endpoint")
 	resourceAppID := flags.String("resource-app-id", "", "target service/resource app id")
@@ -542,6 +712,9 @@ func runDiagnose(args []string, stdout io.Writer) error {
 		defaults := loadOCIContextDefaults(*ociContextBin, serviceName)
 		if !explicitFlags(visited, "issuer") && strings.TrimSpace(*issuer) == "" {
 			*issuer = defaults.Issuer
+		}
+		if !explicitFlags(visited, "service") && strings.TrimSpace(*service) == "" {
+			*service = string(inferServiceKind(defaults, planner.ServiceGeneric))
 		}
 		if !explicitFlags(visited, "profile") && strings.TrimSpace(*profile) == "" {
 			*profile = defaults.Profile
@@ -832,6 +1005,7 @@ Usage:
   %s get defaults [options]
   %s get service-apps [options]
   %s describe service-app [options]
+  %s clone app --flow authorization-code --name hebe-obp-user
   %s plan apps [options]
   %s plan apps [options] -o oci-context-yaml
   %s plan apps [options] -o ochain-env
@@ -857,18 +1031,21 @@ Plan options:
   --principal-email-domain example.invalid
   --include user,service,jwt
     jwt expands to jwt-service,jwt-user,workload
+  clone app --flow authorization-code --name <app-name>
+    emits one oci-context auth target; pipe to oci-context service add --set-current
   --oci-context=true
-    read profile, region, config path, issuer, and scope defaults from current oci-context
+    read profile, region, config path, current_service, issuer, and scope defaults from current oci-context
   --oci-context-service obp
     token service name for issuer/scope defaults
   -o, --output json|text|oci-context-yaml|oci-context-json|commands|ochain-env|ochain-dotenv|ochain-json
 
 Pipe contracts:
   plan-consuming commands accept -f - for stdin
-  plan apps -o oci-context-yaml can pipe into oci-context auth service import --file -
+  clone app emits JSON that can pipe into oci-context service add --set-current
+  plan apps -o oci-context-yaml can pipe into oci-context service add --set-current
   plan apps -o ochain-env emits OCHAIN_TOKEN_COMMAND
   handoff remains available for saved plan files
-`, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
+`, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
 }
 
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {
@@ -917,6 +1094,18 @@ func defaultOCIContextServiceName(service string) string {
 	}
 }
 
+func inferServiceKind(defaults ociContextDefaults, fallback planner.ServiceKind) planner.ServiceKind {
+	serviceName := strings.ToLower(strings.TrimSpace(defaults.ServiceName))
+	scope := strings.ToLower(strings.TrimSpace(defaults.Scope))
+	if serviceName == string(planner.ServiceOBP) || strings.Contains(serviceName, "obp") || strings.Contains(scope, "/restproxy") || strings.Contains(scope, "blockchain.ocp.oraclecloud.com") {
+		return planner.ServiceOBP
+	}
+	if fallback == "" {
+		return planner.ServiceGeneric
+	}
+	return fallback
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -927,8 +1116,19 @@ func firstNonEmpty(values ...string) string {
 }
 
 func resolvedDoctorDefaults(bin string, service string, serviceOverride string) doctor.Defaults {
-	serviceName := firstNonEmpty(serviceOverride, defaultOCIContextServiceName(service), service)
+	requestedService := firstNonEmpty(serviceOverride, defaultOCIContextServiceName(service), service)
+	serviceName := requestedService
 	defaults := loadOCIContextDefaults(bin, serviceName)
+	serviceName = firstNonEmpty(defaults.ServiceName, serviceName)
+	if serviceName == "" {
+		fallback := loadOCIContextDefaults(bin, string(planner.ServiceOBP))
+		if fallback.Issuer != "" || fallback.Scope != "" {
+			defaults = fallback
+			serviceName = firstNonEmpty(fallback.ServiceName, string(planner.ServiceOBP))
+		} else {
+			serviceName = string(planner.ServiceOBP)
+		}
+	}
 	return doctor.Defaults{
 		ContextName:   defaults.ContextName,
 		Profile:       defaults.Profile,
