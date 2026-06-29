@@ -167,6 +167,28 @@ func TestGetDefaultsText(t *testing.T) {
 	}
 }
 
+func TestGetDefaultsUsesCurrentService(t *testing.T) {
+	restore := mockOCIContext(t, map[string]string{
+		"export -f json":            `{"name":"oabcs1","profile":"OABCS1","region":"us-sanjose-1","current_service":"hebe-obp-user"}`,
+		"paths -o json":             `{"oci_config_path":"/tmp/oci-config"}`,
+		"auth service list -o json": `[{"name":"hebe-obp-user","issuer":"https://idcs-example.identity.oraclecloud.com","scope":"https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy"}]`,
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{"get", "defaults", "-o", "text"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run failed with %d: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"service: hebe-obp-user", "issuer: https://idcs-example.identity.oraclecloud.com"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
 func TestDiscoverText(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -234,6 +256,53 @@ func TestDiscoverUsesDefaultOBPTokenService(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in output:\n%s", want, out)
 		}
+	}
+}
+
+func TestCloneAppAuthorizationCodeOutputsOCIContextTarget(t *testing.T) {
+	restore := mockOCIContext(t, map[string]string{
+		"export -f json":            `{"name":"oabcs1","profile":"OABCS1","region":"us-sanjose-1","current_service":"obp"}`,
+		"paths -o json":             `{"oci_config_path":"/tmp/oci-config"}`,
+		"auth service list -o json": `[{"name":"obp","issuer":"https://idcs-example.identity.oraclecloud.com","scope":"https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy"}]`,
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"clone", "app",
+		"--flow", "authorization-code",
+		"--name", "hebe-obp-user",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("clone app failed with %d: %s", code, stderr.String())
+	}
+	var payload struct {
+		CurrentService string `json:"currentService"`
+		TokenServices  []struct {
+			Name        string `json:"name"`
+			Flow        string `json:"flow"`
+			ClientID    string `json:"clientId"`
+			Issuer      string `json:"issuer"`
+			Scope       string `json:"scope"`
+			RedirectURL string `json:"redirectUrl"`
+		} `json:"tokenServices"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, stdout.String())
+	}
+	if payload.CurrentService != "hebe-obp-user" {
+		t.Fatalf("unexpected current service: %+v", payload)
+	}
+	if len(payload.TokenServices) != 1 {
+		t.Fatalf("expected one token service: %+v", payload)
+	}
+	service := payload.TokenServices[0]
+	if service.Name != "hebe-obp-user" || service.ClientID != "hebe-obp-user" || service.Flow != "authorization-code" {
+		t.Fatalf("unexpected token service: %+v", service)
+	}
+	if service.Issuer == "" || service.Scope == "" || service.RedirectURL != "http://127.0.0.1:8180/callback" {
+		t.Fatalf("missing inherited target values: %+v", service)
 	}
 }
 
