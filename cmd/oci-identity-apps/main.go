@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/adrianmross/oci-identity-apps/internal/cli"
+	"github.com/adrianmross/oci-idm/internal/cli"
 )
 
 func main() {

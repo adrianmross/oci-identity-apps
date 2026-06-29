@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/adrianmross/oci-identity-apps/internal/planner"
+	"github.com/adrianmross/oci-idm/internal/planner"
 )
 
 const SchemaVersion = "oci-idm.validation.v1"

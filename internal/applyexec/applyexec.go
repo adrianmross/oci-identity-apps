@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/adrianmross/oci-identity-apps/internal/planner"
+	"github.com/adrianmross/oci-idm/internal/planner"
 )
 
 type Runner func(name string, args ...string) ([]byte, error)

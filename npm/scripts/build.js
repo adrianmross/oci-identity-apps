@@ -19,9 +19,9 @@ fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 const ldflags = [
   "-s",
   "-w",
-  `-X github.com/adrianmross/oci-identity-apps/internal/cli.version=${pkg.version}`,
-  `-X github.com/adrianmross/oci-identity-apps/internal/cli.commit=${commit}`,
-  `-X github.com/adrianmross/oci-identity-apps/internal/cli.date=${date}`
+  `-X github.com/adrianmross/oci-idm/internal/cli.version=${pkg.version}`,
+  `-X github.com/adrianmross/oci-idm/internal/cli.commit=${commit}`,
+  `-X github.com/adrianmross/oci-idm/internal/cli.date=${date}`
 ].join(" ");
 
 const result = spawnSync("go", ["build", "-ldflags", ldflags, "-o", outputPath, "./cmd/oci-idm"], {

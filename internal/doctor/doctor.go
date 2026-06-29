@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/adrianmross/oci-identity-apps/internal/handoff"
-	"github.com/adrianmross/oci-identity-apps/internal/planner"
-	"github.com/adrianmross/oci-identity-apps/internal/validation"
+	"github.com/adrianmross/oci-idm/internal/handoff"
+	"github.com/adrianmross/oci-idm/internal/planner"
+	"github.com/adrianmross/oci-idm/internal/validation"
 )
 
 const SchemaVersion = "oci-idm.doctor.v1"
