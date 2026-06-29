@@ -66,6 +66,19 @@ By default, `oci-idm` reads the current `oci-context` for OCI CLI defaults:
 Explicit flags always win. Use `--oci-context=false` to disable this defaulting,
 `--oci-context-bin` when testing another binary, and `--oci-context-service`
 when a generic service should read issuer/scope from a named token service.
+Commands with structured output accept `-o` or `--output`; `--format` remains
+available as a compatibility alias.
+Commands that read a plan accept `-f` or `--file`; `--plan` remains available
+as a compatibility alias.
+The preferred command shape is `oci-idm <verb> <resource> [flags]`, similar to
+`kubectl`: `get defaults`, `get service-apps`, `plan apps`, `doctor plan`,
+`materialize plan`, `apply plan`, and `validate plan`.
+
+Inspect the resolved defaults before planning:
+
+```bash
+oci-idm get defaults --service obp -o text
+```
 
 For OBP after selecting your OCI context and importing an `oci-context` token
 service, the shortest planning command is:
@@ -73,7 +86,7 @@ service, the shortest planning command is:
 ```bash
 oci-context use oabcs1
 
-oci-idm plan \
+oci-idm plan apps \
   --service obp \
   --resource-app-id example-resource-app-id \
   --base-app-name example-obp_APPID \
@@ -82,40 +95,40 @@ oci-idm plan \
   --app-role-grants ADMIN=example-admin-role-id,REST_CLIENT=example-rest-client-role-id \
   --principal-mode auto \
   --principal-email-domain example.invalid \
-  --format json > idm-plan.json
+  -o json > idm-plan.json
 ```
 
 Discover the service-created resource app:
 
 ```bash
-oci-idm discover \
+oci-idm get service-apps \
   --query example-oabcs \
-  --format text
+  -o text
 ```
 
 Inspect the resource app once you know its id:
 
 ```bash
-oci-idm discover \
+oci-idm describe service-app \
   --app-id example-resource-app-id \
-  --format text
+  -o text
 ```
 
 Diagnose a generated client app against a known-good app:
 
 ```bash
-oci-idm diagnose \
+oci-idm diagnose apps \
   --service obp \
   --resource-app-id example-resource-app-id \
   --candidate-app-id generated-client-app-id \
   --known-good-app-id known-working-client-app-id \
-  --format text
+  -o text
 ```
 
 Plan companion apps and service role grants:
 
 ```bash
-oci-idm plan \
+oci-idm plan apps \
   --service obp \
   --issuer https://idcs-example.identity.oraclecloud.com \
   --platform https://example-oabcs.blockchain.ocp.oraclecloud.com:7443/restproxy \
@@ -126,13 +139,13 @@ oci-idm plan \
   --app-role-grants ADMIN=example-admin-role-id,REST_CLIENT=example-rest-client-role-id \
   --principal-mode auto \
   --principal-email-domain example.invalid \
-  --format json > idm-plan.json
+  -o json > idm-plan.json
 ```
 
 Materialize reviewed payloads and helper scripts:
 
 ```bash
-oci-idm materialize --plan idm-plan.json --out ./idm-artifacts
+oci-idm materialize plan -f idm-plan.json --out ./idm-artifacts
 ```
 
 The output directory contains:
@@ -146,19 +159,64 @@ The output directory contains:
 - `oci-context-token-services.yml`
 - `oci-context-token-commands.sh`
 
-## oci-context Handoff
-
-Preview the token-service handoff without materializing files:
+Run a local readiness report over the current `oci-context` defaults and a
+plan:
 
 ```bash
-oci-idm handoff \
-  --plan idm-plan.json \
-  --target oci-context \
-  --format yaml
+oci-idm doctor plan -f idm-plan.json -o text
+```
+
+Plan-consuming commands also accept `-f -`, so checks can be composed
+without temporary plan files:
+
+```bash
+oci-idm plan apps --service obp --resource-app-id example-resource-app-id |
+  oci-idm doctor plan -f - -o text
+```
+
+## Pipe Outputs
+
+For day-to-day shell use, prefer emitting the needed projection directly from
+`plan` and piping it to the next tool.
+
+Import generated `oci-context` token services:
+
+```bash
+oci-idm plan apps --service obp --resource-app-id example-resource-app-id \
+  -o oci-context-yaml |
+  oci-context auth service import --file -
 ```
 
 Merge the generated `token_services` entries into a global or project
 `oci-context` config, then validate with `oci-context auth token`.
+
+Emit OChain environment data in standard shell, dotenv, or JSON shapes:
+
+```bash
+# Source a POSIX shell export.
+eval "$(oci-idm plan apps --service obp --resource-app-id example-resource-app-id \
+  -o ochain-env)"
+
+# Write a dotenv fragment for tools that load .env files.
+oci-idm plan apps --service obp --resource-app-id example-resource-app-id \
+  -o ochain-dotenv > .env.ochain
+
+# Pass JSON to another program without shell evaluation.
+oci-idm plan apps --service obp --resource-app-id example-resource-app-id \
+  -o ochain-json
+```
+
+OChain outputs write an `OCHAIN_TOKEN_COMMAND` value using the generated
+`oci-context` token service. By default they choose the first non-browser token
+service, such as `obp-jwt-service`; pass `--token-service obp` when you want a
+cached authorization-code user token instead.
+
+For saved plan files and older scripts, `handoff` remains available as a
+compatibility filter:
+
+```bash
+oci-idm handoff -f idm-plan.json --target oci-context -o yaml
+```
 
 For a planned OBP authorization-code app:
 
@@ -229,7 +287,7 @@ materialized `*-principal-user.json` payload before applying it.
 For a generic service that uses this subject-to-user authorization pattern:
 
 ```bash
-oci-idm plan \
+oci-idm plan apps \
   --service generic \
   --issuer https://idcs-example.identity.oraclecloud.com \
   --scope https://service.example.com/.default \
@@ -238,7 +296,7 @@ oci-idm plan \
   --principal-mode same-name-user \
   --principal-email-domain svc.example.com \
   --app-role-grants SERVICE_ADMIN=service-admin-role-id \
-  --format json > idm-plan.json
+  -o json > idm-plan.json
 ```
 
 For OBP/OBPCS REST proxy OAuth, Oracle documents that client-credentials tokens
@@ -249,7 +307,7 @@ This is why OBP service-account plans use `same-name-user` in `auto` mode.
 
 ## Diagnosis
 
-`oci-idm diagnose` emits safe OCI CLI commands for comparing a service/resource
+`oci-idm diagnose apps` emits safe OCI CLI commands for comparing a service/resource
 app, a candidate OAuth client app, and an optional known-good client app. It
 checks the surfaces that matter for CLI and automation handoff:
 
@@ -268,15 +326,34 @@ grants for the OBP `ADMIN` and `REST_CLIENT` app roles.
 
 ## Apply Model
 
-`apply` is still a dry-run convenience wrapper around materialization:
+By default, `apply` remains a dry-run convenience wrapper around
+materialization:
 
 ```bash
-oci-idm apply --plan idm-plan.json --out ./idm-artifacts
+oci-idm apply plan -f idm-plan.json --out ./idm-artifacts
 ```
 
-It refuses `--execute`. Review payloads, replace placeholders such as
-`<created-app-id>` and `<principal-user-id-for-...>`, then run the generated
-scripts yourself.
+For reviewed plans, `apply plan --execute --confirm` can run the OCI Identity
+Domains changes directly. The executor is intentionally conservative:
+
+- it searches for existing apps by name before creating them
+- it searches for existing same-name principal users before creating them
+- it resolves created or reused app/user ids before creating grants
+- it searches for existing matching grants before creating new grants
+- it fails closed when generated payloads still contain placeholders
+
+```bash
+oci-idm apply plan \
+  -f idm-plan.json \
+  --out ./idm-apply \
+  --execute \
+  --confirm \
+  -o text
+```
+
+JWT service plans still need real certificate material before direct execution.
+Materialize first, replace placeholders such as
+`<x509-base64-der-certificate>` and preset role ids, then rerun direct apply.
 
 ## Compatibility
 
@@ -284,7 +361,7 @@ The old command name continues to work:
 
 ```bash
 oci-identity-apps version
-oci-identity-apps plan --issuer ... --scope ...
+oci-identity-apps plan apps --issuer ... --scope ...
 ```
 
 New documentation and package names use `oci-idm`.

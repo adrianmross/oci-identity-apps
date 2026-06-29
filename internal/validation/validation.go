@@ -2,6 +2,7 @@ package validation
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 
@@ -25,7 +26,7 @@ type Check struct {
 }
 
 func FromPlanFile(path string) (Report, error) {
-	data, err := os.ReadFile(path)
+	data, err := readPlanBytes(path)
 	if err != nil {
 		return Report{}, err
 	}
@@ -34,6 +35,13 @@ func FromPlanFile(path string) (Report, error) {
 		return Report{}, err
 	}
 	return FromPlan(plan), nil
+}
+
+func readPlanBytes(path string) ([]byte, error) {
+	if strings.TrimSpace(path) == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
 }
 
 func FromPlan(plan planner.Plan) Report {
