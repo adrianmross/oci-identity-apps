@@ -472,6 +472,9 @@ func TestDiagnoseText(t *testing.T) {
 		"search-grants-for-candidate-user",
 		"--profile 'DEFAULT'",
 		"OBP_ADMIN_FORBIDDEN",
+		"allowOffline,refreshTokenExpiry,isOPCService,editableAttributes",
+		"client that allows refresh_token is not sufficient",
+		"short-lived user access tokens, JWT assertions, or client credentials",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in output:\n%s", want, out)

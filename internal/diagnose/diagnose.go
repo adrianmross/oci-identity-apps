@@ -95,6 +95,8 @@ func Build(options Options) (Plan, error) {
 
 	checklist := []string{
 		"The candidate app can mint a token for the target service scope.",
+		"The candidate client allows authorization_code and refresh_token, and the target resource app has allowOffline enabled.",
+		"For Oracle service apps, editableAttributes includes allowOffline before attempting to enable offline access.",
 		"The candidate has Grant resources whose app.value is the resource app id.",
 		"The candidate app get output shows granted-app-roles for the required role ids.",
 		"Services that authorize token subjects as users have a userName equal to token sub/client_id.",
@@ -103,6 +105,8 @@ func Build(options Options) (Plan, error) {
 	}
 	interpretation := []string{
 		"If token minting fails, fix OAuth grants, scopes, certificate/client-secret, or assertion audience first.",
+		"A client that allows refresh_token is not sufficient by itself: Identity Domains issues refresh tokens only when the target resource app also allows offline access.",
+		"If the resource app has allowOffline false and protects that attribute, use short-lived user access tokens, JWT assertions, or client credentials until the service owner enables offline access.",
 		"If Grant resources are missing or granted-app-roles is empty, create or repair the Identity Domains app-role grants.",
 		"If token minting succeeds and granted-app-roles is correct but the target service still rejects authorization, the missing mapping is service-side rather than an oci-context token issue.",
 	}
@@ -136,7 +140,7 @@ func appGetCommand(key, description, endpoint string, defaults commandDefaults, 
 		Description: description,
 		Command: identityDomainsCommand(endpoint, defaults, "app", "get",
 			"--app-id "+shellQuote(appID),
-			"--attributes 'id,name,displayName,active,clientType,isOAuthClient,isOAuthResource,allowedGrants,allowedScopes,redirectUris,certificates,accounts,grants,appRoles,grantedAppRoles,userRoles,basedOnTemplate,serviceTypeURN,audience,trustScope,tags'"),
+			"--attributes 'id,name,displayName,active,clientType,isOAuthClient,isOAuthResource,allowedGrants,allowedScopes,redirectUris,certificates,accounts,grants,appRoles,grantedAppRoles,userRoles,basedOnTemplate,serviceTypeURN,audience,trustScope,allowOffline,refreshTokenExpiry,isOPCService,editableAttributes,tags'"),
 	}
 }
 

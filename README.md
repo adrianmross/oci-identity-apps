@@ -156,6 +156,13 @@ oci-idm diagnose apps \
   -o text
 ```
 
+The diagnostic output checks both sides of refresh eligibility. The client app
+must allow Authorization Code and Refresh Token grants, while the target
+resource app must have `allowOffline: true`. A client-side `refresh_token`
+grant alone cannot make a protected Oracle service app issue refresh tokens.
+The generated inspection commands include `isOPCService` and
+`editableAttributes` so this limitation is visible before a patch is tried.
+
 Plan companion apps and service role grants:
 
 ```bash
