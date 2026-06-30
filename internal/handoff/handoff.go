@@ -29,6 +29,7 @@ type TokenService struct {
 	ClientSecretEnv        string `json:"clientSecretEnv,omitempty"`
 	Scope                  string `json:"scope,omitempty"`
 	RedirectURL            string `json:"redirectUrl,omitempty"`
+	OfflineAccess          bool   `json:"offlineAccess,omitempty"`
 	PrivateKeyFileEnv      string `json:"privateKeyFileEnv,omitempty"`
 	KeyID                  string `json:"keyId,omitempty"`
 	JWTAudience            string `json:"jwtAudience,omitempty"`
@@ -102,6 +103,9 @@ func TokenServicesYAML(value OCIContext) string {
 		writeYAMLField(&b, "client_secret_env", service.ClientSecretEnv)
 		writeYAMLField(&b, "scope", service.Scope)
 		writeYAMLField(&b, "redirect_url", service.RedirectURL)
+		if service.OfflineAccess {
+			b.WriteString("    offline_access: true\n")
+		}
 		writeYAMLField(&b, "private_key_file_env", service.PrivateKeyFileEnv)
 		writeYAMLField(&b, "key_id", service.KeyID)
 		writeYAMLField(&b, "jwt_audience", service.JWTAudience)
@@ -206,6 +210,7 @@ func tokenServiceForApp(plan planner.Plan, app planner.AppPlan) (TokenService, b
 		service.Flow = "authorization-code"
 		service.AuthorizationEndpoint = authorize
 		service.RedirectURL = plan.Target.RedirectURL
+		service.OfflineAccess = true
 	case planner.AppService:
 		service.Flow = "client-credentials"
 		service.ClientSecretEnv = envName(app.Name, "CLIENT_SECRET")
@@ -294,6 +299,9 @@ func tokenCommand(service TokenService) string {
 	}
 	if service.RedirectURL != "" {
 		args = append(args, "--redirect-url "+shellQuote(service.RedirectURL))
+	}
+	if service.OfflineAccess {
+		args = append(args, "--offline-access")
 	}
 	if service.PrivateKeyFileEnv != "" {
 		args = append(args, "--private-key-file \"$"+service.PrivateKeyFileEnv+"\"")

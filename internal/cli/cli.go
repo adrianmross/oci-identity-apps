@@ -80,6 +80,17 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 			return 1
 		}
 		return 0
+	case "patch":
+		commandArgs, err := stripResourceArg(args[1:], "app", "service-app", "resource-app", "identity-app")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runPatchApp(commandArgs, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "defaults", "context":
 		if err := runDefaults(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -683,6 +694,113 @@ func runDiscover(args []string, stdout io.Writer) error {
 	}
 }
 
+type appPatchPlan struct {
+	SchemaVersion string   `json:"schemaVersion"`
+	AppID         string   `json:"appId"`
+	IDCSEndpoint  string   `json:"idcsEndpoint"`
+	AllowOffline  bool     `json:"allowOffline"`
+	Command       string   `json:"command"`
+	Args          []string `json:"args"`
+	Executed      bool     `json:"executed"`
+}
+
+func runPatchApp(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("patch app", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	appID := flags.String("app-id", "", "Identity Domains app id")
+	issuer := flags.String("issuer", "", "OCI Identity Domains issuer URL")
+	idcsEndpoint := flags.String("idcs-endpoint", "", "OCI Identity Domains base endpoint")
+	allowOffline := flags.Bool("allow-offline", false, "allow the resource app to issue refresh tokens")
+	profile := flags.String("profile", "", "OCI CLI profile; defaults from current oci-context")
+	ociConfigPath := flags.String("oci-config-file", "", "OCI CLI config file; defaults from current oci-context")
+	region := flags.String("region", "", "OCI region; defaults from current oci-context")
+	useOCIContext := flags.Bool("oci-context", true, "read current oci-context defaults for omitted values")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
+	ociContextService := flags.String("oci-context-service", string(planner.ServiceOBP), "oci-context token service used for issuer defaults")
+	execute := flags.Bool("execute", false, "execute the OCI SCIM patch")
+	confirm := flags.Bool("confirm", false, "required with --execute")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json or text")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	visited := collectVisitedFlags(flags)
+	if strings.TrimSpace(*appID) == "" {
+		return fmt.Errorf("--app-id is required")
+	}
+	if !visited["allow-offline"] || !*allowOffline {
+		return fmt.Errorf("--allow-offline must be explicitly set")
+	}
+	if *execute && !*confirm {
+		return fmt.Errorf("--execute requires --confirm")
+	}
+	if *useOCIContext {
+		defaults := loadOCIContextDefaults(*ociContextBin, *ociContextService)
+		if !explicitFlags(visited, "issuer") && strings.TrimSpace(*issuer) == "" {
+			*issuer = defaults.Issuer
+		}
+		if !explicitFlags(visited, "profile") && strings.TrimSpace(*profile) == "" {
+			*profile = defaults.Profile
+		}
+		if !explicitFlags(visited, "oci-config-file") && strings.TrimSpace(*ociConfigPath) == "" {
+			*ociConfigPath = defaults.OCIConfigPath
+		}
+		if !explicitFlags(visited, "region") && strings.TrimSpace(*region) == "" {
+			*region = defaults.Region
+		}
+	}
+	endpoint := firstNonEmpty(*idcsEndpoint, *issuer)
+	if strings.TrimSpace(endpoint) == "" {
+		return fmt.Errorf("--issuer or --idcs-endpoint is required")
+	}
+	endpoint = strings.TrimRight(endpoint, "/")
+	commandArgs := []string{
+		"identity-domains", "app", "patch",
+		"--endpoint", endpoint,
+		"--app-id", *appID,
+		"--schemas", `["urn:ietf:params:scim:api:messages:2.0:PatchOp"]`,
+		"--operations", `[{"op":"replace","path":"allowOffline","value":true}]`,
+	}
+	if strings.TrimSpace(*profile) != "" {
+		commandArgs = append(commandArgs, "--profile", *profile)
+	}
+	if strings.TrimSpace(*ociConfigPath) != "" {
+		commandArgs = append(commandArgs, "--config-file", *ociConfigPath)
+	}
+	if strings.TrimSpace(*region) != "" {
+		commandArgs = append(commandArgs, "--region", *region)
+	}
+	plan := appPatchPlan{
+		SchemaVersion: "oci-idm.app-patch.v1",
+		AppID:         *appID,
+		IDCSEndpoint:  endpoint,
+		AllowOffline:  true,
+		Command:       "oci",
+		Args:          commandArgs,
+		Executed:      *execute,
+	}
+	if *execute {
+		if _, err := runCommand("oci", commandArgs...); err != nil {
+			return fmt.Errorf("patch app %s: %w", *appID, err)
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(output)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(plan)
+	case "text":
+		fmt.Fprintf(stdout, "appId: %s\nallowOffline: true\nexecuted: %t\n", plan.AppID, plan.Executed)
+		fmt.Fprintf(stdout, "command: %s %s\n", plan.Command, strings.Join(plan.Args, " "))
+		return nil
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
 func runDiagnose(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("diagnose", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -1006,6 +1124,7 @@ Usage:
   %s get service-apps [options]
   %s describe service-app [options]
   %s clone app --flow authorization-code --name hebe-obp-user
+  %s patch app --app-id resource-app-id --allow-offline
   %s plan apps [options]
   %s plan apps [options] -o oci-context-yaml
   %s plan apps [options] -o ochain-env
@@ -1045,7 +1164,7 @@ Pipe contracts:
   plan apps -o oci-context-yaml can pipe into oci-context service add --set-current
   plan apps -o ochain-env emits OCHAIN_TOKEN_COMMAND
   handoff remains available for saved plan files
-`, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
+`, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
 }
 
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {

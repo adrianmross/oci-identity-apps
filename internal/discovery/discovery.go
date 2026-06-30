@@ -57,7 +57,7 @@ func Build(options Options) (Plan, error) {
 			Command: identityDomainsCommand(endpoint, defaults, "apps", "search",
 				"--schemas '[\"urn:ietf:params:scim:api:messages:2.0:SearchRequest\"]'",
 				"--filter "+shellQuote(filter),
-				"--attributes '[\"id\",\"displayName\",\"name\",\"clientType\",\"allowedGrants\",\"allowedScopes\",\"scopes\",\"userRoles\",\"grantedAppRoles\",\"certificates\",\"isOAuthClient\",\"isOAuthResource\"]'",
+				"--attributes '[\"id\",\"displayName\",\"name\",\"clientType\",\"allowedGrants\",\"allowedScopes\",\"scopes\",\"userRoles\",\"grantedAppRoles\",\"certificates\",\"isOAuthClient\",\"isOAuthResource\",\"allowOffline\",\"refreshTokenExpiry\",\"isOpcService\",\"isManagedApp\"]'",
 				"--count 50"),
 		})
 	}
@@ -68,7 +68,7 @@ func Build(options Options) (Plan, error) {
 				Description: "Inspect the service/resource app for scopes, app roles, and Cloud service metadata.",
 				Command: identityDomainsCommand(endpoint, defaults, "app", "get",
 					"--app-id "+shellQuote(appID),
-					"--attributes 'id,displayName,name,allowedGrants,allowedScopes,scopes,userRoles,grantedAppRoles,accounts,audience,serviceTypeURN,isOAuthClient,isOAuthResource'"),
+					"--attributes 'id,displayName,name,allowedGrants,allowedScopes,scopes,userRoles,grantedAppRoles,accounts,audience,serviceTypeURN,isOAuthClient,isOAuthResource,allowOffline,refreshTokenExpiry,isOpcService,isManagedApp,editableAttributes,idcsPreventedOperations'"),
 			},
 			Command{
 				Key:         "search-grants-for-resource-app",

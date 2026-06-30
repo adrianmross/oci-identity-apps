@@ -115,6 +115,26 @@ oci-idm describe service-app \
   -o text
 ```
 
+OBPCS-generated resource apps can have `allowOffline: false`, which causes IDCS
+to reject Authorization Code requests containing `offline_access`. Preview the
+least-privilege SCIM patch, then execute it only after reviewing the app id:
+
+```bash
+oci-idm patch app \
+  --app-id example-resource-app-id \
+  --allow-offline
+
+oci-idm patch app \
+  --app-id example-resource-app-id \
+  --allow-offline \
+  --execute --confirm
+```
+
+The command reads issuer, OCI profile, config path, and region from the current
+`oci-context` by default. It modifies only the resource app's `allowOffline`
+attribute; client applications still need Authorization Code and Refresh Token
+grants of their own.
+
 Diagnose a generated client app against a known-good app:
 
 ```bash
@@ -196,7 +216,9 @@ oci-context auth token --no-login --format raw
 `clone app` emits a standard `oci-context` handoff document by default. It does
 not print secrets. Use the existing `plan apps`, `materialize plan`, and
 `apply plan --execute --confirm` path when you need reviewable payload files and
-live Identity Domains creation.
+live Identity Domains creation. Authorization-code handoffs include
+`offlineAccess: true`, so `oci-context` requests `offline_access` and can cache
+the refresh token enabled by the generated app.
 
 Login to the current OBP target through `oci-context`:
 
