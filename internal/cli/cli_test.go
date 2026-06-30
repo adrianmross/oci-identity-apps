@@ -233,6 +233,142 @@ func TestGetServiceAppsText(t *testing.T) {
 	}
 }
 
+func TestPatchAppOfflineAccessPlansAndExecutesGuardedSCIMPatch(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	args := []string{
+		"patch", "app",
+		"--app-id", "resource-app-id",
+		"--allow-offline",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--profile", "OABCS1",
+		"--region", "us-sanjose-1",
+		"--oci-context=false",
+		"--preflight=false",
+	}
+	code := Run(args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("patch plan failed with %d: %s", code, stderr.String())
+	}
+	var plan appPatchPlan
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		t.Fatalf("decode patch plan: %v", err)
+	}
+	if plan.Executed || !plan.AllowOffline || plan.Command != "oci" {
+		t.Fatalf("unexpected patch plan: %+v", plan)
+	}
+	if !strings.Contains(strings.Join(plan.Args, " "), "allowOffline") {
+		t.Fatalf("patch args omit allowOffline: %v", plan.Args)
+	}
+
+	called := false
+	restore := mockRunner(func(name string, commandArgs ...string) ([]byte, error) {
+		joined := strings.Join(commandArgs, " ")
+		if name != "oci" {
+			t.Fatalf("unexpected command: %s %v", name, commandArgs)
+		}
+		if strings.Contains(joined, "identity-domains app patch") {
+			called = true
+			return []byte(`{"data":{"allow-offline":true}}`), nil
+		}
+		if strings.Contains(joined, "identity-domains app get") {
+			return []byte(`{"data":{"id":"resource-app-id","allow-offline":true}}`), nil
+		}
+		t.Fatalf("unexpected OCI command: %v", commandArgs)
+		return nil, nil
+	})
+	defer restore()
+	stdout.Reset()
+	stderr.Reset()
+	code = Run(append(args, "--execute", "--confirm"), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("patch execute failed with %d: %s", code, stderr.String())
+	}
+	if !called {
+		t.Fatal("expected OCI patch command")
+	}
+}
+
+func TestPatchAppOfflineAccessRejectsProtectedOracleServiceApp(t *testing.T) {
+	restore := mockRunner(func(name string, commandArgs ...string) ([]byte, error) {
+		if name != "oci" || !strings.Contains(strings.Join(commandArgs, " "), "identity-domains app get") {
+			t.Fatalf("unexpected command: %s %v", name, commandArgs)
+		}
+		return []byte(`{
+			"data": {
+				"id": "resource-app-id",
+				"name": "obpcs_APPID",
+				"is-opc-service": true,
+				"allow-offline": false,
+				"service-type-urn": "AUTOBLOCKCHAIN",
+				"editable-attributes": [{"name":"showInMyApps"}]
+			}
+		}`), nil
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"patch", "app",
+		"--app-id", "resource-app-id",
+		"--allow-offline",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--oci-context=false",
+		"--execute",
+		"--confirm",
+	}, &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "protects allowOffline") || !strings.Contains(stderr.String(), "AUTOBLOCKCHAIN") {
+		t.Fatalf("expected protected service app failure, code=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestPatchAppOfflineAccessReturnsNoopWhenAlreadyEnabled(t *testing.T) {
+	restore := mockRunner(func(name string, commandArgs ...string) ([]byte, error) {
+		if name != "oci" || !strings.Contains(strings.Join(commandArgs, " "), "identity-domains app get") {
+			t.Fatalf("unexpected command: %s %v", name, commandArgs)
+		}
+		return []byte(`{"data":{"id":"resource-app-id","allow-offline":true}}`), nil
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"patch", "app",
+		"--app-id", "resource-app-id",
+		"--allow-offline",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--oci-context=false",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected no-op success, code=%d stderr=%s", code, stderr.String())
+	}
+	var plan appPatchPlan
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Status != "already-enabled" || plan.Executed || plan.CurrentAllowOffline == nil || !*plan.CurrentAllowOffline {
+		t.Fatalf("unexpected no-op plan: %+v", plan)
+	}
+}
+
+func TestPatchAppOfflineAccessRequiresConfirmation(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"patch", "app",
+		"--app-id", "resource-app-id",
+		"--allow-offline",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--oci-context=false",
+		"--execute",
+	}, &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "--execute requires --confirm") {
+		t.Fatalf("expected confirmation failure, code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func TestDiscoverUsesDefaultOBPTokenService(t *testing.T) {
 	restore := mockOCIContext(t, map[string]string{
 		"export -f json":            `{"name":"oabcs1","profile":"OABCS1","region":"us-sanjose-1"}`,
@@ -280,12 +416,13 @@ func TestCloneAppAuthorizationCodeOutputsOCIContextTarget(t *testing.T) {
 	var payload struct {
 		CurrentService string `json:"currentService"`
 		TokenServices  []struct {
-			Name        string `json:"name"`
-			Flow        string `json:"flow"`
-			ClientID    string `json:"clientId"`
-			Issuer      string `json:"issuer"`
-			Scope       string `json:"scope"`
-			RedirectURL string `json:"redirectUrl"`
+			Name          string `json:"name"`
+			Flow          string `json:"flow"`
+			ClientID      string `json:"clientId"`
+			Issuer        string `json:"issuer"`
+			Scope         string `json:"scope"`
+			RedirectURL   string `json:"redirectUrl"`
+			OfflineAccess bool   `json:"offlineAccess"`
 		} `json:"tokenServices"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
@@ -303,6 +440,9 @@ func TestCloneAppAuthorizationCodeOutputsOCIContextTarget(t *testing.T) {
 	}
 	if service.Issuer == "" || service.Scope == "" || service.RedirectURL != "http://127.0.0.1:8180/callback" {
 		t.Fatalf("missing inherited target values: %+v", service)
+	}
+	if !service.OfflineAccess {
+		t.Fatalf("authorization-code handoff must request offline access: %+v", service)
 	}
 }
 
@@ -332,6 +472,9 @@ func TestDiagnoseText(t *testing.T) {
 		"search-grants-for-candidate-user",
 		"--profile 'DEFAULT'",
 		"OBP_ADMIN_FORBIDDEN",
+		"allowOffline,refreshTokenExpiry,isOPCService,editableAttributes",
+		"client that allows refresh_token is not sufficient",
+		"short-lived user access tokens, JWT assertions, or client credentials",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected %q in output:\n%s", want, out)

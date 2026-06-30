@@ -80,6 +80,17 @@ func RunWithName(program string, args []string, stdout io.Writer, stderr io.Writ
 			return 1
 		}
 		return 0
+	case "patch":
+		commandArgs, err := stripResourceArg(args[1:], "app", "service-app", "resource-app", "identity-app")
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := runPatchApp(commandArgs, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "defaults", "context":
 		if err := runDefaults(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -683,6 +694,200 @@ func runDiscover(args []string, stdout io.Writer) error {
 	}
 }
 
+type appPatchPlan struct {
+	SchemaVersion       string   `json:"schemaVersion"`
+	AppID               string   `json:"appId"`
+	IDCSEndpoint        string   `json:"idcsEndpoint"`
+	AllowOffline        bool     `json:"allowOffline"`
+	CurrentAllowOffline *bool    `json:"currentAllowOffline,omitempty"`
+	Status              string   `json:"status"`
+	Command             string   `json:"command"`
+	Args                []string `json:"args"`
+	Executed            bool     `json:"executed"`
+}
+
+type appPatchState struct {
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	IsOPCService       bool   `json:"is-opc-service"`
+	AllowOffline       bool   `json:"allow-offline"`
+	ServiceTypeURN     string `json:"service-type-urn"`
+	EditableAttributes []struct {
+		Name string `json:"name"`
+	} `json:"editable-attributes"`
+}
+
+func runPatchApp(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("patch app", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	appID := flags.String("app-id", "", "Identity Domains app id")
+	issuer := flags.String("issuer", "", "OCI Identity Domains issuer URL")
+	idcsEndpoint := flags.String("idcs-endpoint", "", "OCI Identity Domains base endpoint")
+	allowOffline := flags.Bool("allow-offline", false, "allow the resource app to issue refresh tokens")
+	profile := flags.String("profile", "", "OCI CLI profile; defaults from current oci-context")
+	ociConfigPath := flags.String("oci-config-file", "", "OCI CLI config file; defaults from current oci-context")
+	region := flags.String("region", "", "OCI region; defaults from current oci-context")
+	useOCIContext := flags.Bool("oci-context", true, "read current oci-context defaults for omitted values")
+	ociContextBin := flags.String("oci-context-bin", "oci-context", "oci-context binary used for defaults")
+	ociContextService := flags.String("oci-context-service", string(planner.ServiceOBP), "oci-context token service used for issuer defaults")
+	execute := flags.Bool("execute", false, "execute the OCI SCIM patch")
+	confirm := flags.Bool("confirm", false, "required with --execute")
+	preflight := flags.Bool("preflight", true, "read app state and reject protected Oracle service attributes")
+	var output string
+	addOutputFlags(flags, &output, "json", "output format: json or text")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	visited := collectVisitedFlags(flags)
+	if strings.TrimSpace(*appID) == "" {
+		return fmt.Errorf("--app-id is required")
+	}
+	if !visited["allow-offline"] || !*allowOffline {
+		return fmt.Errorf("--allow-offline must be explicitly set")
+	}
+	if *execute && !*confirm {
+		return fmt.Errorf("--execute requires --confirm")
+	}
+	if *useOCIContext {
+		defaults := loadOCIContextDefaults(*ociContextBin, *ociContextService)
+		if !explicitFlags(visited, "issuer") && strings.TrimSpace(*issuer) == "" {
+			*issuer = defaults.Issuer
+		}
+		if !explicitFlags(visited, "profile") && strings.TrimSpace(*profile) == "" {
+			*profile = defaults.Profile
+		}
+		if !explicitFlags(visited, "oci-config-file") && strings.TrimSpace(*ociConfigPath) == "" {
+			*ociConfigPath = defaults.OCIConfigPath
+		}
+		if !explicitFlags(visited, "region") && strings.TrimSpace(*region) == "" {
+			*region = defaults.Region
+		}
+	}
+	endpoint := firstNonEmpty(*idcsEndpoint, *issuer)
+	if strings.TrimSpace(endpoint) == "" {
+		return fmt.Errorf("--issuer or --idcs-endpoint is required")
+	}
+	endpoint = strings.TrimRight(endpoint, "/")
+	commandArgs := []string{
+		"identity-domains", "app", "patch",
+		"--endpoint", endpoint,
+		"--app-id", *appID,
+		"--schemas", `["urn:ietf:params:scim:api:messages:2.0:PatchOp"]`,
+		"--operations", `[{"op":"replace","path":"allowOffline","value":true}]`,
+	}
+	if strings.TrimSpace(*profile) != "" {
+		commandArgs = append(commandArgs, "--profile", *profile)
+	}
+	if strings.TrimSpace(*ociConfigPath) != "" {
+		commandArgs = append(commandArgs, "--config-file", *ociConfigPath)
+	}
+	if strings.TrimSpace(*region) != "" {
+		commandArgs = append(commandArgs, "--region", *region)
+	}
+	plan := appPatchPlan{
+		SchemaVersion: "oci-idm.app-patch.v1",
+		AppID:         *appID,
+		IDCSEndpoint:  endpoint,
+		AllowOffline:  true,
+		Status:        "planned",
+		Command:       "oci",
+		Args:          commandArgs,
+	}
+	if *preflight {
+		state, err := getAppPatchState(endpoint, *appID, *profile, *ociConfigPath, *region)
+		if err != nil {
+			return fmt.Errorf("inspect app %s before patch: %w", *appID, err)
+		}
+		plan.CurrentAllowOffline = boolPtr(state.AllowOffline)
+		if state.AllowOffline {
+			plan.Status = "already-enabled"
+			return writeAppPatchPlan(stdout, output, plan)
+		}
+		if state.IsOPCService && !appAttributeEditable(state, "allowOffline") {
+			return fmt.Errorf(
+				"app %s (%s) is an Oracle service app (%s) that protects allowOffline; Identity Domains cannot enable refresh tokens on this seeded resource app. Ask the Oracle service owner or support to enable it, or use short-lived user login or client credentials",
+				firstNonEmpty(state.ID, *appID), firstNonEmpty(state.Name, "unknown"), firstNonEmpty(state.ServiceTypeURN, "unknown service"),
+			)
+		}
+	}
+	if *execute {
+		if _, err := runCommand("oci", commandArgs...); err != nil {
+			return fmt.Errorf("patch app %s: %w", *appID, err)
+		}
+		plan.Executed = true
+		plan.Status = "updated"
+		state, err := getAppPatchState(endpoint, *appID, *profile, *ociConfigPath, *region)
+		if err != nil {
+			return fmt.Errorf("verify app %s after patch: %w", *appID, err)
+		}
+		plan.CurrentAllowOffline = boolPtr(state.AllowOffline)
+		if !state.AllowOffline {
+			return fmt.Errorf("patch app %s completed but allowOffline is still false", *appID)
+		}
+	}
+	return writeAppPatchPlan(stdout, output, plan)
+}
+
+func getAppPatchState(endpoint string, appID string, profile string, ociConfigPath string, region string) (appPatchState, error) {
+	args := []string{
+		"identity-domains", "app", "get",
+		"--endpoint", endpoint,
+		"--app-id", appID,
+		"--attributes", "id,name,isOPCService,allowOffline,editableAttributes,serviceTypeURN",
+	}
+	if strings.TrimSpace(profile) != "" {
+		args = append(args, "--profile", profile)
+	}
+	if strings.TrimSpace(ociConfigPath) != "" {
+		args = append(args, "--config-file", ociConfigPath)
+	}
+	if strings.TrimSpace(region) != "" {
+		args = append(args, "--region", region)
+	}
+	data, err := runCommand("oci", args...)
+	if err != nil {
+		return appPatchState{}, err
+	}
+	var response struct {
+		Data appPatchState `json:"data"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return appPatchState{}, fmt.Errorf("decode OCI app response: %w", err)
+	}
+	return response.Data, nil
+}
+
+func appAttributeEditable(state appPatchState, name string) bool {
+	for _, attribute := range state.EditableAttributes {
+		if strings.EqualFold(strings.TrimSpace(attribute.Name), strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func writeAppPatchPlan(stdout io.Writer, output string, plan appPatchPlan) error {
+	switch strings.ToLower(strings.TrimSpace(output)) {
+	case "json":
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(plan)
+	case "text":
+		fmt.Fprintf(stdout, "appId: %s\nallowOffline: true\nstatus: %s\nexecuted: %t\n", plan.AppID, plan.Status, plan.Executed)
+		fmt.Fprintf(stdout, "command: %s %s\n", plan.Command, strings.Join(plan.Args, " "))
+		return nil
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
 func runDiagnose(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("diagnose", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -1006,6 +1211,7 @@ Usage:
   %s get service-apps [options]
   %s describe service-app [options]
   %s clone app --flow authorization-code --name hebe-obp-user
+  %s patch app --app-id resource-app-id --allow-offline
   %s plan apps [options]
   %s plan apps [options] -o oci-context-yaml
   %s plan apps [options] -o ochain-env
@@ -1045,7 +1251,7 @@ Pipe contracts:
   plan apps -o oci-context-yaml can pipe into oci-context service add --set-current
   plan apps -o ochain-env emits OCHAIN_TOKEN_COMMAND
   handoff remains available for saved plan files
-`, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
+`, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program, program)
 }
 
 func writeTextPlan(stdout io.Writer, plan planner.Plan) {

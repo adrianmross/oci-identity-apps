@@ -115,6 +115,36 @@ oci-idm describe service-app \
   -o text
 ```
 
+Resource apps can have `allowOffline: false`, which causes Identity Domains to
+reject Authorization Code requests containing `offline_access`. Preview the
+least-privilege SCIM patch, then execute it only after reviewing the app id:
+
+```bash
+oci-idm patch app \
+  --app-id example-resource-app-id \
+  --allow-offline
+
+oci-idm patch app \
+  --app-id example-resource-app-id \
+  --allow-offline \
+  --execute --confirm
+```
+
+The command reads issuer, OCI profile, config path, and region from the current
+`oci-context` by default. Its preflight reads the live app, returns a no-op when
+refresh is already enabled, and verifies the value after a successful patch.
+It modifies only the resource app's `allowOffline` attribute; client
+applications still need Authorization Code and Refresh Token grants of their
+own.
+
+Oracle service apps can protect seeded attributes even when the generic App
+schema describes them as writable. When `isOPCService` is true and
+`editableAttributes` does not contain `allowOffline`, `oci-idm` refuses the
+patch before making a change and identifies the Oracle service type. The
+service owner or Oracle Support must enable refresh for that resource app. A
+customer-owned resource app cannot duplicate the same fully qualified scope,
+because scope FQS values are unique within an identity domain.
+
 Diagnose a generated client app against a known-good app:
 
 ```bash
@@ -125,6 +155,13 @@ oci-idm diagnose apps \
   --known-good-app-id known-working-client-app-id \
   -o text
 ```
+
+The diagnostic output checks both sides of refresh eligibility. The client app
+must allow Authorization Code and Refresh Token grants, while the target
+resource app must have `allowOffline: true`. A client-side `refresh_token`
+grant alone cannot make a protected Oracle service app issue refresh tokens.
+The generated inspection commands include `isOPCService` and
+`editableAttributes` so this limitation is visible before a patch is tried.
 
 Plan companion apps and service role grants:
 
@@ -196,7 +233,9 @@ oci-context auth token --no-login --format raw
 `clone app` emits a standard `oci-context` handoff document by default. It does
 not print secrets. Use the existing `plan apps`, `materialize plan`, and
 `apply plan --execute --confirm` path when you need reviewable payload files and
-live Identity Domains creation.
+live Identity Domains creation. Authorization-code handoffs include
+`offlineAccess: true`, so `oci-context` requests `offline_access` and can cache
+the refresh token enabled by the generated app.
 
 Login to the current OBP target through `oci-context`:
 
