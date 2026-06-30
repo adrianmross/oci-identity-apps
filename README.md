@@ -115,8 +115,8 @@ oci-idm describe service-app \
   -o text
 ```
 
-OBPCS-generated resource apps can have `allowOffline: false`, which causes IDCS
-to reject Authorization Code requests containing `offline_access`. Preview the
+Resource apps can have `allowOffline: false`, which causes Identity Domains to
+reject Authorization Code requests containing `offline_access`. Preview the
 least-privilege SCIM patch, then execute it only after reviewing the app id:
 
 ```bash
@@ -131,9 +131,19 @@ oci-idm patch app \
 ```
 
 The command reads issuer, OCI profile, config path, and region from the current
-`oci-context` by default. It modifies only the resource app's `allowOffline`
-attribute; client applications still need Authorization Code and Refresh Token
-grants of their own.
+`oci-context` by default. Its preflight reads the live app, returns a no-op when
+refresh is already enabled, and verifies the value after a successful patch.
+It modifies only the resource app's `allowOffline` attribute; client
+applications still need Authorization Code and Refresh Token grants of their
+own.
+
+Oracle service apps can protect seeded attributes even when the generic App
+schema describes them as writable. When `isOPCService` is true and
+`editableAttributes` does not contain `allowOffline`, `oci-idm` refuses the
+patch before making a change and identifies the Oracle service type. The
+service owner or Oracle Support must enable refresh for that resource app. A
+customer-owned resource app cannot duplicate the same fully qualified scope,
+because scope FQS values are unique within an identity domain.
 
 Diagnose a generated client app against a known-good app:
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 )
@@ -9,7 +10,14 @@ import (
 type commandRunner func(name string, args ...string) ([]byte, error)
 
 var runCommand commandRunner = func(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).Output()
+	output, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message != "" {
+			return output, fmt.Errorf("%w: %s", err, message)
+		}
+	}
+	return output, err
 }
 
 type ociContextDefaults struct {

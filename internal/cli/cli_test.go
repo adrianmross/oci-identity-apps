@@ -244,6 +244,7 @@ func TestPatchAppOfflineAccessPlansAndExecutesGuardedSCIMPatch(t *testing.T) {
 		"--profile", "OABCS1",
 		"--region", "us-sanjose-1",
 		"--oci-context=false",
+		"--preflight=false",
 	}
 	code := Run(args, &stdout, &stderr)
 	if code != 0 {
@@ -262,11 +263,19 @@ func TestPatchAppOfflineAccessPlansAndExecutesGuardedSCIMPatch(t *testing.T) {
 
 	called := false
 	restore := mockRunner(func(name string, commandArgs ...string) ([]byte, error) {
-		called = true
-		if name != "oci" || !strings.Contains(strings.Join(commandArgs, " "), "identity-domains app patch") {
-			t.Fatalf("unexpected patch command: %s %v", name, commandArgs)
+		joined := strings.Join(commandArgs, " ")
+		if name != "oci" {
+			t.Fatalf("unexpected command: %s %v", name, commandArgs)
 		}
-		return []byte(`{"data":{"allow-offline":true}}`), nil
+		if strings.Contains(joined, "identity-domains app patch") {
+			called = true
+			return []byte(`{"data":{"allow-offline":true}}`), nil
+		}
+		if strings.Contains(joined, "identity-domains app get") {
+			return []byte(`{"data":{"id":"resource-app-id","allow-offline":true}}`), nil
+		}
+		t.Fatalf("unexpected OCI command: %v", commandArgs)
+		return nil, nil
 	})
 	defer restore()
 	stdout.Reset()
@@ -277,6 +286,70 @@ func TestPatchAppOfflineAccessPlansAndExecutesGuardedSCIMPatch(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("expected OCI patch command")
+	}
+}
+
+func TestPatchAppOfflineAccessRejectsProtectedOracleServiceApp(t *testing.T) {
+	restore := mockRunner(func(name string, commandArgs ...string) ([]byte, error) {
+		if name != "oci" || !strings.Contains(strings.Join(commandArgs, " "), "identity-domains app get") {
+			t.Fatalf("unexpected command: %s %v", name, commandArgs)
+		}
+		return []byte(`{
+			"data": {
+				"id": "resource-app-id",
+				"name": "obpcs_APPID",
+				"is-opc-service": true,
+				"allow-offline": false,
+				"service-type-urn": "AUTOBLOCKCHAIN",
+				"editable-attributes": [{"name":"showInMyApps"}]
+			}
+		}`), nil
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"patch", "app",
+		"--app-id", "resource-app-id",
+		"--allow-offline",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--oci-context=false",
+		"--execute",
+		"--confirm",
+	}, &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "protects allowOffline") || !strings.Contains(stderr.String(), "AUTOBLOCKCHAIN") {
+		t.Fatalf("expected protected service app failure, code=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestPatchAppOfflineAccessReturnsNoopWhenAlreadyEnabled(t *testing.T) {
+	restore := mockRunner(func(name string, commandArgs ...string) ([]byte, error) {
+		if name != "oci" || !strings.Contains(strings.Join(commandArgs, " "), "identity-domains app get") {
+			t.Fatalf("unexpected command: %s %v", name, commandArgs)
+		}
+		return []byte(`{"data":{"id":"resource-app-id","allow-offline":true}}`), nil
+	})
+	defer restore()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run([]string{
+		"patch", "app",
+		"--app-id", "resource-app-id",
+		"--allow-offline",
+		"--issuer", "https://idcs-example.identity.oraclecloud.com",
+		"--oci-context=false",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected no-op success, code=%d stderr=%s", code, stderr.String())
+	}
+	var plan appPatchPlan
+	if err := json.Unmarshal(stdout.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Status != "already-enabled" || plan.Executed || plan.CurrentAllowOffline == nil || !*plan.CurrentAllowOffline {
+		t.Fatalf("unexpected no-op plan: %+v", plan)
 	}
 }
 
